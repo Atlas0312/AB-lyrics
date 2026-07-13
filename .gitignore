@@ -1,0 +1,26 @@
+# Build
+bin/
+obj/
+out/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Secrets (never commit real credentials)
+appsettings.*.local.json
+*.pfx
+
+# Logs
+*.log
+
+# Worktrees (isolated dev branches)
+.worktrees/
