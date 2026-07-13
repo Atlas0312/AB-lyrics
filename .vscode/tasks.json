@@ -1,0 +1,218 @@
+{
+    // ABLyrics — VSCode 任务配置
+    //
+    // 用法：
+    //   1) Ctrl+Shift+P → "Tasks: Run Task" → 选任务
+    //   2) Ctrl+Shift+B → 触发默认构建任务（build）
+    //   3) F1 → "Tasks: Configure Default Build Task" 可改默认
+    //
+    // 编译报错会自动出现在左下角 "问题" 面板，双击跳到出错行。
+    //
+    // ⚠️ WPF 只能在 Windows 跑。WSL 终端里 `dotnet` 会装不上、用不了。
+
+    "version": "2.0.0",
+
+    // 公共选项：每个任务都会继承（减少重复）
+    "options": {
+        "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+        }
+    },
+
+    "tasks": [
+
+        // ============================================================
+        //  1. build —— 编译整个解决方案
+        // ============================================================
+        // 默认 build 任务（Ctrl+Shift+B 触发）。编译错误会进问题面板。
+        {
+            "label": "build",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/ABLyrics.sln",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary;ForceConsoleColor"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "label": "🔨 build —— 编译解决方案",
+                "reveal": "always",
+                "clear": true,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "编译 ABLyrics.sln。报错会自动出现在左下角『问题』面板。"
+        },
+
+        // ============================================================
+        //  2. run —— 编译 + 启动 WPF 应用
+        // ============================================================
+        // dependsOn: build → 点 run 会先 build，再启动。
+        {
+            "label": "run",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "run",
+                "--project",
+                "${workspaceFolder}/src/ABLyrics.App/ABLyrics.App.csproj",
+                "--configuration",
+                "Debug"
+            ],
+            "dependsOn": ["build"],
+            "group": "build",
+            "presentation": {
+                "label": "▶️ run —— 启动 ABLyrics",
+                "reveal": "always",
+                "clear": false,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "先编译，再启动主程序。WPF 窗口会弹出，关闭后任务结束。"
+        },
+
+        // ============================================================
+        //  3. test —— 跑 xUnit 测试
+        // ============================================================
+        {
+            "label": "test",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "test",
+                "${workspaceFolder}/ABLyrics.sln",
+                "--nologo",
+                "--verbosity",
+                "normal"
+            ],
+            "group": "test",
+            "presentation": {
+                "label": "🧪 test —— 运行所有单元测试",
+                "reveal": "always",
+                "clear": true,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "跑所有 xUnit 测试。失败用例会列在输出末尾。"
+        },
+
+        // ============================================================
+        //  4. clean —— 清理 bin/obj
+        // ============================================================
+        // 删掉编译产物。下次 build 会重新生成。
+        {
+            "label": "clean",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "clean",
+                "${workspaceFolder}/ABLyrics.sln",
+                "/nologo",
+                "/verbosity:quiet"
+            ],
+            "group": "build",
+            "presentation": {
+                "label": "🧹 clean —— 清理 bin/obj",
+                "reveal": "silent",
+                "clear": false,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "删除所有项目的 bin/obj。下次 build 会从零开始。"
+        },
+
+        // ============================================================
+        //  5. restore —— 还原 NuGet 包
+        // ============================================================
+        // 拉取 .csproj 里 PackageReference 声明的依赖。
+        {
+            "label": "restore",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "restore",
+                "${workspaceFolder}/ABLyrics.sln",
+                "/nologo",
+                "/verbosity:minimal"
+            ],
+            "group": "build",
+            "presentation": {
+                "label": "📦 restore —— 还原 NuGet 包",
+                "reveal": "always",
+                "clear": true,
+                "panel": "shared"
+            },
+            "problemMatcher": [],
+            "detail": "下载 NuGet 依赖。一般 build 会自动跑，但『找不到包』时手动跑一次。"
+        },
+
+        // ============================================================
+        //  6. publish —— 发布单文件可执行程序
+        // ============================================================
+        // 生成可在其他机器直接跑的 exe（不需装 .NET）。
+        // 产物路径：src/ABLyrics.App/bin/Release/net8.0-windows/win-x64/publish/
+        {
+            "label": "publish",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "publish",
+                "${workspaceFolder}/src/ABLyrics.App/ABLyrics.App.csproj",
+                "--configuration",
+                "Release",
+                "--runtime",
+                "win-x64",
+                "--self-contained",
+                "true",
+                "/p:PublishSingleFile=true",
+                "/p:IncludeNativeLibrariesForSelfExtract=true",
+                "/p:DebugType=embedded",
+                "/nologo"
+            ],
+            "group": "build",
+            "presentation": {
+                "label": "📤 publish —— 发布单文件 exe",
+                "reveal": "always",
+                "clear": true,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "生成 win-x64 自包含单文件 exe，路径见任务输出末尾。"
+        },
+
+        // ============================================================
+        //  7. watch —— 文件改动时自动重编译
+        // ============================================================
+        // 边写边编译，控制台持续输出。Ctrl+C 停止。
+        {
+            "label": "watch",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "watch",
+                "build",
+                "${workspaceFolder}/ABLyrics.sln",
+                "/nologo",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "group": "build",
+            "isBackground": true,
+            "presentation": {
+                "label": "👀 watch —— 监听改动自动重编译",
+                "reveal": "always",
+                "clear": false,
+                "panel": "shared",
+                "close": false
+            },
+            "problemMatcher": ["$msCompile"],
+            "detail": "改代码自动重编译，不启动 UI。看到『Build succeeded... Watching...』就绪。"
+        }
+    ]
+}

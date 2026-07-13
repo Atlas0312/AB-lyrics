@@ -1,4 +1,4 @@
-# SpotLyrics
+# ABLyrics
 
 Windows 桌面歌词小组件，为 Spotify 提供**任务栏矮条（AppBar）** 与**悬浮歌词（Overlay）** 实时同步展示。
 
@@ -42,7 +42,7 @@ Windows 桌面歌词小组件，为 Spotify 提供**任务栏矮条（AppBar）*
 |------|------|-------------|
 | **LRCLIB** | 主源，通过 [lrclib.net](https://lrclib.net) API 获取 | 无需配置 |
 | **Netease** | 网易云音乐 Fallback，中文歌更全 | 需提供 `MUSIC_U` Cookie |
-| **Local** | 本地 `.lrc` 文件 | 可选，默认路径 `%APPDATA%/SpotLyrics/lyrics/` |
+| **Local** | 本地 `.lrc` 文件 | 可选，默认路径 `%APPDATA%/ABLyrics/lyrics/` |
 
 ### 歌词源切换
 
@@ -53,7 +53,7 @@ Windows 桌面歌词小组件，为 Spotify 提供**任务栏矮条（AppBar）*
 
 ## 配置
 
-编辑 `src/SpotLyrics.App/appsettings.json`：
+编辑 `src/ABLyrics.App/appsettings.json`：
 
 ```json
 {
@@ -68,7 +68,7 @@ Windows 桌面歌词小组件，为 Spotify 提供**任务栏矮条（AppBar）*
   "Lyrics": {
     "PrimaryProvider": "LRCLIB",
     "FallbackProvider": "Netease",
-    "UserAgent": "SpotLyrics/0.1.0",
+    "UserAgent": "AB-lyrics/0.1.0",
     "LocalPath": ""
   },
   "Ui": {
@@ -84,7 +84,7 @@ Windows 桌面歌词小组件，为 Spotify 提供**任务栏矮条（AppBar）*
 | `Spotify.RedirectUri` | 本地 OAuth 回调地址 |
 | `Spotify.Scopes` | 请求的 Spotify API 权限范围 |
 | `NetEase.MusicU` | 网易云 `MUSIC_U` Cookie（中文歌 Fallback 需要） |
-| `Lyrics.LocalPath` | 本地歌词库路径（空则使用默认 `%APPDATA%/SpotLyrics/lyrics/`） |
+| `Lyrics.LocalPath` | 本地歌词库路径（空则使用默认 `%APPDATA%/ABLyrics/lyrics/`） |
 | `Lyrics.UserAgent` | 请求 LRCLIB API 的 User-Agent |
 | `Ui.DefaultMode` | 启动默认模式（`AppBar` / `Overlay`） |
 | `Ui.AppBarHeight` | 默认矮条高度（px） |
@@ -115,14 +115,14 @@ Windows 桌面歌词小组件，为 Spotify 提供**任务栏矮条（AppBar）*
 | 四周边距 | 左/上/右/下 分别设定 | 16/4/16/4 |
 | 显示行数 | 1 行 / 2 行 | 1 行 |
 
-所有样式自动持久化至 `%LOCALAPPDATA%/SpotLyrics/display-settings.json`。
+所有样式自动持久化至 `%LOCALAPPDATA%/ABLyrics/display-settings.json`。
 
 ## 项目结构
 
 ```
-SpotLyrics/
+ABLyrics/
 ├── src/
-│   └── SpotLyrics.App/              # 主应用（WPF）
+│   └── ABLyrics.App/              # 主应用（WPF）
 │       ├── App.xaml[.cs]            # 应用入口、托盘图标、窗口管理
 │       ├── appsettings.json         # 应用配置
 │       ├── Configuration/           # 配置加载与持久化
@@ -172,9 +172,9 @@ SpotLyrics/
 ## 开发
 
 ```bash
-cd E:\MyProjects\SpotLyrics
+cd E:\MyProjects\ABLyrics
 dotnet build
-dotnet run --project src/SpotLyrics.App
+dotnet run --project src/ABLyrics.App
 ```
 
 项目要求 .NET 8 SDK，WPF 仅在 Windows 上支持。
