@@ -14,13 +14,19 @@ public class LyricsSyncEngineTests
     /// </summary>
     private static LyricsData ParseData(string lrc)
     {
-        return LrcParser.Parse(lrc) ?? new LyricsData();
+        var parsed = LrcParser.Parse(lrc);
+        if (parsed is null)
+        {
+            // 极端兜底：确保 Lines 始终非 null，方便测试断言
+            parsed = new LyricsData { Lines = new System.Collections.Generic.List<ILineInfo>() };
+        }
+        return parsed;
     }
 
     private static LyricsData NewDataWith(params ILineInfo[] lines)
     {
         var data = ParseData("[00:01.00] placeholder");
-        data.Lines.Clear();
+        data.Lines!.Clear();
         foreach (var l in lines)
         {
             data.Lines.Add(l);

@@ -94,15 +94,14 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     // ---------- Local ----------
 
     [Fact]
-    public void FetchCandidateAsync_LocalFile_ReadsContent()
+    public async Task FetchCandidateAsync_LocalFile_ReadsContent()
     {
         var file = Path.Combine(_dir, "Artist - Album - Song.lrc");
         File.WriteAllText(file, "[00:01.00] hello");
 
         var service = NewService(BuildLrcLibClient(new StubHandler()));
-        var result = service
-            .FetchCandidateAsync(Track(), new CandidateOrigin.Local(file), CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var result = await service
+            .FetchCandidateAsync(Track(), new CandidateOrigin.Local(file), CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("Local", result!.Source);
@@ -111,14 +110,13 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     }
 
     [Fact]
-    public void FetchCandidateAsync_LocalFileMissing_ReturnsNull()
+    public async Task FetchCandidateAsync_LocalFileMissing_ReturnsNull()
     {
         var missing = Path.Combine(_dir, "nonexistent.lrc");
 
         var service = NewService(BuildLrcLibClient(new StubHandler()));
-        var result = service
-            .FetchCandidateAsync(Track(), new CandidateOrigin.Local(missing), CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var result = await service
+            .FetchCandidateAsync(Track(), new CandidateOrigin.Local(missing), CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -126,7 +124,7 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     // ---------- Lrclib ----------
 
     [Fact]
-    public void FetchCandidateAsync_LrclibHit_ReturnsSynced()
+    public async Task FetchCandidateAsync_LrclibHit_ReturnsSynced()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
@@ -134,9 +132,8 @@ public class LyricsServiceFetchCandidateTests : IDisposable
             """);
         var service = NewService(BuildLrcLibClient(handler));
 
-        var result = service
-            .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(123), CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var result = await service
+            .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(123), CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("LRCLIB", result!.Source);
@@ -145,7 +142,7 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     }
 
     [Fact]
-    public void FetchCandidateAsync_LrclibHitPlainOnly_ReturnsPlain()
+    public async Task FetchCandidateAsync_LrclibHitPlainOnly_ReturnsPlain()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
@@ -153,9 +150,8 @@ public class LyricsServiceFetchCandidateTests : IDisposable
             """);
         var service = NewService(BuildLrcLibClient(handler));
 
-        var result = service
-            .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(1), CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var result = await service
+            .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(1), CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("LRCLIB", result!.Source);
@@ -164,15 +160,14 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     }
 
     [Fact]
-    public void FetchCandidateAsync_LrclibFailure_ReturnsNull()
+    public async Task FetchCandidateAsync_LrclibFailure_ReturnsNull()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.NotFound, "");
         var service = NewService(BuildLrcLibClient(handler));
 
-        var result = service
-            .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(1), CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var result = await service
+            .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(1), CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -180,13 +175,12 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     // ---------- Netease ----------
 
     [Fact]
-    public void FetchCandidateAsync_Netease_ReturnsNull()
+    public async Task FetchCandidateAsync_Netease_ReturnsNull()
     {
         var service = NewService(BuildLrcLibClient(new StubHandler()));
 
-        var result = service
-            .FetchCandidateAsync(Track(), new CandidateOrigin.Netease(123L), CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var result = await service
+            .FetchCandidateAsync(Track(), new CandidateOrigin.Netease(123L), CancellationToken.None);
 
         Assert.Null(result);
     }

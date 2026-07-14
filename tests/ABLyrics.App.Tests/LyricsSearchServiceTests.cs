@@ -113,13 +113,12 @@ public class LyricsSearchServiceTests : IDisposable
     // ---------- SearchAsync / Local ----------
 
     [Fact]
-    public void SearchAsync_LocalLibrary_ReturnsLocalCandidates()
+    public async Task SearchAsync_LocalLibrary_ReturnsLocalCandidates()
     {
         File.WriteAllText(Path.Combine(_dir, "Artist - Album - Song.lrc"), "[00:01.00] lyrics");
         var service = NewServiceWithLocalDir();
 
-        var candidates = service.SearchAsync(Track(), "Local", CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var candidates = await service.SearchAsync(Track(), "Local", CancellationToken.None);
 
         var c = Assert.Single(candidates);
         Assert.Equal("Local", c.Source);
@@ -130,7 +129,7 @@ public class LyricsSearchServiceTests : IDisposable
     // ---------- SearchAsync / LRCLIB ----------
 
     [Fact]
-    public void SearchAsync_LrclibLibrary_SortsByDurationProximity()
+    public async Task SearchAsync_LrclibLibrary_SortsByDurationProximity()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
@@ -147,8 +146,7 @@ public class LyricsSearchServiceTests : IDisposable
         var service = NewServiceWithLocalDir(lrcLib);
 
         // target duration = 180000 ms (180 s) → id=2 离 180s 最近，应排在第一
-        var candidates = service.SearchAsync(Track(durationMs: 180_000), "LRCLIB", CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var candidates = await service.SearchAsync(Track(durationMs: 180_000), "LRCLIB", CancellationToken.None);
 
         Assert.Equal(3, candidates.Count);
         Assert.Equal(2, candidates[0].Origin.GetType().GetProperty("LrclibId")!.GetValue(candidates[0].Origin));
@@ -157,7 +155,7 @@ public class LyricsSearchServiceTests : IDisposable
     }
 
     [Fact]
-    public void SearchAsync_LrclibLibrary_ParsesAlbumAndDuration()
+    public async Task SearchAsync_LrclibLibrary_ParsesAlbumAndDuration()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
@@ -169,8 +167,7 @@ public class LyricsSearchServiceTests : IDisposable
         var lrcLib = BuildLrcLibClient(handler);
         var service = NewServiceWithLocalDir(lrcLib);
 
-        var candidates = service.SearchAsync(Track(durationMs: 200_000), "LRCLIB", CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var candidates = await service.SearchAsync(Track(durationMs: 200_000), "LRCLIB", CancellationToken.None);
 
         var c = Assert.Single(candidates);
         Assert.Equal("LRCLIB", c.Source);
@@ -183,7 +180,7 @@ public class LyricsSearchServiceTests : IDisposable
     }
 
     [Fact]
-    public void SearchAsync_LrclibLibrary_NoAlbum_FormatsDurationOnly()
+    public async Task SearchAsync_LrclibLibrary_NoAlbum_FormatsDurationOnly()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
@@ -195,8 +192,7 @@ public class LyricsSearchServiceTests : IDisposable
         var lrcLib = BuildLrcLibClient(handler);
         var service = NewServiceWithLocalDir(lrcLib);
 
-        var candidates = service.SearchAsync(Track(durationMs: 65_000), "LRCLIB", CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var candidates = await service.SearchAsync(Track(durationMs: 65_000), "LRCLIB", CancellationToken.None);
 
         var c = Assert.Single(candidates);
         Assert.Equal("1:05", c.Label);
@@ -205,23 +201,21 @@ public class LyricsSearchServiceTests : IDisposable
     // ---------- SearchAsync / Netease / Unknown ----------
 
     [Fact]
-    public void SearchAsync_NeteaseNoMusicU_ReturnsEmpty()
+    public async Task SearchAsync_NeteaseNoMusicU_ReturnsEmpty()
     {
         var service = NewServiceWithLocalDir(withMusicU: false);
 
-        var candidates = service.SearchAsync(Track(), "Netease", CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var candidates = await service.SearchAsync(Track(), "Netease", CancellationToken.None);
 
         Assert.Empty(candidates);
     }
 
     [Fact]
-    public void SearchAsync_UnknownLibrary_ReturnsEmpty()
+    public async Task SearchAsync_UnknownLibrary_ReturnsEmpty()
     {
         var service = NewServiceWithLocalDir();
 
-        var candidates = service.SearchAsync(Track(), "BogusLib", CancellationToken.None)
-            .GetAwaiter().GetResult();
+        var candidates = await service.SearchAsync(Track(), "BogusLib", CancellationToken.None);
 
         Assert.Empty(candidates);
     }
@@ -229,48 +223,48 @@ public class LyricsSearchServiceTests : IDisposable
     // ---------- ProbeAsync ----------
 
     [Fact]
-    public void ProbeAsync_LrclibReachable_True()
+    public async Task ProbeAsync_LrclibReachable_True()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, "[]");
         var lrcLib = BuildLrcLibClient(handler);
         var service = NewServiceWithLocalDir(lrcLib);
 
-        var probe = service.ProbeAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var probe = await service.ProbeAsync(CancellationToken.None);
 
         Assert.True(probe["LRCLIB"]);
         Assert.True(probe["Local"]);
     }
 
     [Fact]
-    public void ProbeAsync_LrclibReachable_False()
+    public async Task ProbeAsync_LrclibReachable_False()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.ServiceUnavailable, "");
         var lrcLib = BuildLrcLibClient(handler);
         var service = NewServiceWithLocalDir(lrcLib);
 
-        var probe = service.ProbeAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var probe = await service.ProbeAsync(CancellationToken.None);
 
         Assert.False(probe["LRCLIB"]);
     }
 
     [Fact]
-    public void ProbeAsync_LocalReachable_True()
+    public async Task ProbeAsync_LocalReachable_True()
     {
         var service = NewServiceWithLocalDir();
 
-        var probe = service.ProbeAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var probe = await service.ProbeAsync(CancellationToken.None);
 
         Assert.True(probe["Local"]);
     }
 
     [Fact]
-    public void ProbeAsync_NeteaseSkipped_WhenMusicUEmpty()
+    public async Task ProbeAsync_NeteaseSkipped_WhenMusicUEmpty()
     {
         var service = NewServiceWithLocalDir(withMusicU: false);
 
-        var probe = service.ProbeAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var probe = await service.ProbeAsync(CancellationToken.None);
 
         Assert.False(probe.ContainsKey("Netease"));
     }
