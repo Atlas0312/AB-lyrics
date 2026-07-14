@@ -81,7 +81,13 @@ internal sealed class LocalLyricsProvider
                 string.Equals(Path.GetFileName(f), legacy, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string BuildFileName(TrackInfo track)
+    private static string BuildFileName(TrackInfo track) => BuildFileNamePublic(track);
+
+    /// <summary>
+    /// 暴露给兄弟类 <see cref="LocalLyricsSearchProvider"/> 复用：候选搜索时也要按
+    /// 同样的"Artist - Album - Name.lrc"模板构造 primary 文件名，避免定义两遍。
+    /// </summary>
+    internal static string BuildFileNamePublic(TrackInfo track)
     {
         var stem = string.IsNullOrWhiteSpace(track.Album)
             ? $"{track.Artist} - {track.Name}"
