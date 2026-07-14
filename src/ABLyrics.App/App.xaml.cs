@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using ABLyrics.App.Configuration;
+using ABLyrics.App.Models;
 using ABLyrics.App.Services;
 using ABLyrics.App.Services.Lyrics;
 using ABLyrics.App.Services.Playback;
@@ -42,6 +43,13 @@ public partial class App : System.Windows.Application
 
     private Forms.ToolStripMenuItem? _overlayToggle;
     private PlaybackSourceRegistry? _sourceRegistry;
+    private Services.Lyrics.LyricsSearchService? _searchService;
+    private Configuration.LyricsOverrideStore? _overrideStore;
+    private Views.LyricsCandidatePickerWindow? _candidatePicker;
+    private IReadOnlyDictionary<string, bool> _libraryAvailability = new Dictionary<string, bool>();
+    public static event Action<IReadOnlyDictionary<string, bool>>? LibraryAvailabilityChanged;
+    public static IReadOnlyDictionary<string, bool> LibraryAvailability =>
+        Current is App app ? app._libraryAvailability : new Dictionary<string, bool>();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -68,20 +76,45 @@ public partial class App : System.Windows.Application
         _sourceRegistry = new PlaybackSourceRegistry();
         _sourceRegistry.Register(new SpotifyPlaybackSource(authService, playbackService, Settings));
 
+        _searchService = new Services.Lyrics.LyricsSearchService(Settings);
+        _overrideStore = new Configuration.LyricsOverrideStore();
+
         Coordinator = new PlaybackCoordinator(
             _sourceRegistry,
             Settings.Playback.ActiveSource,
             lyricsService,
             LyricsBehavior,
-            DisplaySettings);
+            DisplaySettings,
+            _searchService,
+            _overrideStore);
         Coordinator.IsPlayingChanged += OnIsPlayingChanged;
         Coordinator.SourceStateChanged += () => Dispatcher.BeginInvoke(OnCoordinatorSourceStateChanged);
+        Coordinator.CandidatePickerRequested += () => Dispatcher.BeginInvoke(ShowCandidatePicker);
 
         CreateTrayIcon();
 
         _ = TryRestoreSessionAsync();
+        _ = ProbeLibraryAvailabilityAsync();
 
         base.OnStartup(e);
+    }
+
+    private async Task ProbeLibraryAvailabilityAsync()
+    {
+        if (_searchService is null) return;
+        try
+        {
+            var result = await _searchService.ProbeAsync().ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _libraryAvailability = result;
+                LibraryAvailabilityChanged?.Invoke(result);
+            });
+        }
+        catch (Exception ex)
+        {
+            DevExceptionReporter.Show(ex, "歌词库探活失败");
+        }
     }
 
     private async Task TryRestoreSessionAsync()
@@ -140,6 +173,11 @@ public partial class App : System.Windows.Application
         _overlayToggle = new Forms.ToolStripMenuItem("悬浮歌词");
         _overlayToggle.Click += (_, _) => ToggleOverlay();
         menu.Items.Add(_overlayToggle);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
+        var pickerItem = new Forms.ToolStripMenuItem("选择歌词版本…");
+        pickerItem.Click += (_, _) => Dispatcher.BeginInvoke(ShowCandidatePicker);
+        menu.Items.Add(pickerItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         var settingsItem = new Forms.ToolStripMenuItem("设置…");
@@ -267,6 +305,41 @@ public partial class App : System.Windows.Application
         }
     }
 
+    /// <summary>
+    /// 创建或激活选版本窗口。单例：关闭按钮 = Hide，不释放。
+    /// </summary>
+    public void ShowCandidatePicker()
+    {
+        if (_searchService is null || _overrideStore is null) return;
+
+        TrackInfo? track = null;
+        if (Coordinator.GetCurrentTrackId() is { } trackId
+            && !string.IsNullOrEmpty(trackId))
+        {
+            track = new TrackInfo
+            {
+                Id = trackId,
+                Name = Coordinator.TrackTitle,
+                Artist = Coordinator.ArtistName,
+                Album = Coordinator.TrackAlbum,
+                DurationMs = 0,
+            };
+        }
+
+        if (_candidatePicker is null)
+        {
+            _candidatePicker = new LyricsCandidatePickerWindow(
+                Coordinator, _searchService, _overrideStore, track);
+        }
+
+        if (_candidatePicker.WindowState == WindowState.Minimized)
+        {
+            _candidatePicker.WindowState = WindowState.Normal;
+        }
+        _candidatePicker.Show();
+        _candidatePicker.Activate();
+    }
+
     private void OnIsPlayingChanged(bool isPlaying)
     {
         Dispatcher.BeginInvoke(() =>
@@ -291,6 +364,7 @@ public partial class App : System.Windows.Application
 
         _appBarWindow?.Close();
         _overlayWindow?.Close();
+        _candidatePicker?.Close();
         Coordinator.Dispose();
         _trayIcon?.Dispose();
         base.OnExit(e);

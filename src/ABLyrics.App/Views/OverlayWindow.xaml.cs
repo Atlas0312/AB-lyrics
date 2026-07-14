@@ -29,6 +29,7 @@ public partial class OverlayWindow : Window
         };
 
         TrackInfoPanel.MouseLeftButtonDown += OnTrackInfoMouseLeftButtonDown;
+        PreviewMouseRightButtonDown += OnPreviewMouseRightButtonDown;
 
         _lifecycle = new LyricsHostLifecycle(
             this,
@@ -104,5 +105,16 @@ public partial class OverlayWindow : Window
     {
         if (e.ClickCount > 1) return;
         DragMove();
+    }
+
+    private void OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var menu = new Forms.ContextMenuStrip();
+        var pickerItem = new Forms.ToolStripMenuItem("选择歌词版本…");
+        pickerItem.Click += (_, _) => ((App)App.Current).ShowCandidatePicker();
+        menu.Items.Add(pickerItem);
+        var pos = PointToScreen(e.GetPosition(this));
+        menu.Show(new Drawing.Point((int)pos.X, (int)pos.Y));
+        e.Handled = true;
     }
 }
