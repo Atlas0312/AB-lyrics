@@ -4,6 +4,7 @@ using ABLyrics.App.Configuration;
 using ABLyrics.App.Models;
 using ABLyrics.App.Services.Lyrics;
 using ABLyrics.App.Services.Playback;
+using Lyricify.Lyrics.Parsers;
 
 namespace ABLyrics.App.Services;
 
@@ -19,6 +20,10 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     private readonly System.Timers.Timer _timer;
     private readonly HashSet<string> _localPromptedTrackIds = new();
     private readonly object _localPromptLock = new();
+    private readonly ILyricsSearchService _searchService;
+    private readonly LyricsOverrideStore _overrideStore;
+    private readonly Dictionary<string, CandidateOrigin> _overrides;
+    private LyricsCandidate? _overrideCandidate;
 
     private IPlaybackSource? _activePlaybackSource;
     private string _lyricsActiveSource = string.Empty;
@@ -59,11 +64,16 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         string initialSourceId,
         ILyricsService lyricsService,
         LyricsBehaviorService lyricsBehavior,
-        DisplaySettingsService? displaySettings = null)
+        DisplaySettingsService? displaySettings = null,
+        ILyricsSearchService? searchService = null,
+        LyricsOverrideStore? overrideStore = null)
     {
         _registry = registry;
         _lyricsService = lyricsService;
         _lyricsBehavior = lyricsBehavior;
+        _searchService = searchService ?? new LyricsSearchService(App.Settings);
+        _overrideStore = overrideStore ?? new LyricsOverrideStore();
+        _overrides = _overrideStore.Load().ToDictionary(kv => kv.Key, kv => kv.Value);
         _activePlaybackSource = _registry.Get(initialSourceId);
 
         _syncOffsetMs = Math.Clamp(displaySettings?.Current.SyncOffsetMs ?? 150, 0, 500);
@@ -136,6 +146,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     public event Action<bool>? IsPlayingChanged;
     public event Action? SourceStateChanged;
     public event Action<TrackInfo>? LocalLyricsMissing;
+    public event Action<long>? ProgressMsChanged;
+    public event Action? CandidatePickerRequested;
 
     public bool IsRunning => _timer.Enabled;
 
@@ -399,9 +411,28 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         _loadedTrackId = track.Id;
         _trackDurationMs = track.DurationMs;
         _trackAlbum = track.Album;
+        TrackTitle = track.Name;
+        ArtistName = track.Artist;
         _trackInfoLayout.ResetForNewTrack();
         ShouldCenterTrackInfo = true;
         ClearLyricLines();
+
+        var key = TrackKey.From(track);
+        if (_overrides.TryGetValue(key, out var persistedOrigin))
+        {
+            var candidate = await TryLoadFromOriginAsync(track, persistedOrigin).ConfigureAwait(false);
+            if (candidate is not null)
+            {
+                _overrideCandidate = candidate;
+                ApplyCandidateToEngine(candidate);
+                LyricsSource = candidate.Source;
+                StatusText = string.Empty;
+                return;
+            }
+            // 文件丢失：移除 override 并回退
+            _overrideStore.Remove(key);
+            _overrides.Remove(key);
+        }
 
         StatusText = "正在尝试 LRCLIB…";
         LoadingFlash?.Invoke();
@@ -422,6 +453,76 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         var elapsed = DateTimeOffset.UtcNow - _lastSampleAt;
         var clamped = Math.Min((long)elapsed.TotalMilliseconds, PollIntervalMs);
         return _lastProgressMs + clamped - _syncOffsetMs;
+    }
+
+    /// <summary>
+    /// 触发候选选择窗口请求事件，由 <see cref="App"/> 在 UI 线程响应并弹出窗口。
+    /// </summary>
+    public void OpenCandidatePicker()
+    {
+        CandidatePickerRequested?.Invoke();
+    }
+
+    /// <summary>
+    /// 用户在候选窗口里点了 [确认]：立即把指定候选喂入主引擎并持久化为覆盖项。
+    /// </summary>
+    public async Task ApplyCandidateAsync(LyricsCandidate candidate)
+    {
+        var track = new TrackInfo
+        {
+            Id = _loadedTrackId ?? string.Empty,
+            Name = _trackTitle,
+            Artist = _artistName,
+            Album = _trackAlbum,
+            DurationMs = _trackDurationMs,
+        };
+        var key = TrackKey.From(track);
+        _overrides[key] = candidate.Origin;
+        _overrideStore.Save(key, candidate.Origin);
+        _overrideCandidate = candidate;
+        ApplyCandidateToEngine(candidate);
+        LyricsSource = candidate.Source;
+        StatusText = string.Empty;
+        await Task.CompletedTask;
+    }
+
+    private async Task<LyricsCandidate?> TryLoadFromOriginAsync(TrackInfo track, CandidateOrigin origin)
+    {
+        var result = await _lyricsService.FetchCandidateAsync(track, origin).ConfigureAwait(false);
+        if (result is null) return null;
+        return new LyricsCandidate
+        {
+            Source = result.Source,
+            Label = "覆盖项",
+            SyncedLyrics = result.SyncedLyrics,
+            PlainLyrics = result.PlainLyrics,
+            DurationMs = track.DurationMs,
+            Origin = origin,
+        };
+    }
+
+    private void ApplyCandidateToEngine(LyricsCandidate candidate)
+    {
+        _syncEngine.SetDurationMs(candidate.DurationMs);
+        if (!string.IsNullOrWhiteSpace(candidate.SyncedLyrics))
+        {
+            var data = LrcParser.Parse(candidate.SyncedLyrics);
+            var plain = string.IsNullOrWhiteSpace(candidate.PlainLyrics)
+                ? Array.Empty<string>()
+                : candidate.PlainLyrics.Split(
+                    ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            _syncEngine.LoadParsed(data, plain);
+        }
+        else if (!string.IsNullOrWhiteSpace(candidate.PlainLyrics))
+        {
+            var plain = candidate.PlainLyrics.Split(
+                ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            _syncEngine.LoadParsed(null, plain);
+        }
+        else
+        {
+            _syncEngine.LoadParsed(null, Array.Empty<string>());
+        }
     }
 
     private void UpdateLyricFrame(long progressMs)
@@ -447,6 +548,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
             PreviousLine = string.Empty;
             NextLine = string.Empty;
         }
+
+        ProgressMsChanged?.Invoke(progressMs);
     }
 
     private void ResetDisplay(string status)
