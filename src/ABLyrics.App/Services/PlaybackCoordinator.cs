@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using ABLyrics.App.Configuration;
 using ABLyrics.App.Models;
 using ABLyrics.App.Services.Lyrics;
-using ABLyrics.App.Services.Spotify;
+using ABLyrics.App.Services.Playback;
 
 namespace ABLyrics.App.Services;
 
@@ -11,15 +11,18 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 {
     private const int PollIntervalMs = 800;
 
-    private readonly ISpotifyAuthService _authService;
-    private readonly ISpotifyPlaybackService _playbackService;
+    private readonly PlaybackSourceRegistry _registry;
     private readonly ILyricsService _lyricsService;
+    private readonly LyricsBehaviorService _lyricsBehavior;
     private readonly LyricsSyncEngine _syncEngine = new();
     private readonly TrackInfoLayoutState _trackInfoLayout = new();
     private readonly System.Timers.Timer _timer;
+    private readonly HashSet<string> _localPromptedTrackIds = new();
+    private readonly object _localPromptLock = new();
 
-    private string _activeSource = string.Empty;
-    private string _statusText = "未连接 Spotify";
+    private IPlaybackSource? _activePlaybackSource;
+    private string _lyricsActiveSource = string.Empty;
+    private string _statusText = "未配置播放来源";
     private string _trackTitle = string.Empty;
     private string _artistName = string.Empty;
     private string _currentLine = string.Empty;
@@ -51,14 +54,16 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     }
 
     public PlaybackCoordinator(
-        ISpotifyAuthService authService,
-        ISpotifyPlaybackService playbackService,
+        PlaybackSourceRegistry registry,
+        string initialSourceId,
         ILyricsService lyricsService,
+        LyricsBehaviorService lyricsBehavior,
         DisplaySettingsService? displaySettings = null)
     {
-        _authService = authService;
-        _playbackService = playbackService;
+        _registry = registry;
         _lyricsService = lyricsService;
+        _lyricsBehavior = lyricsBehavior;
+        _activePlaybackSource = _registry.Get(initialSourceId);
 
         _syncOffsetMs = Math.Clamp(displaySettings?.Current.SyncOffsetMs ?? 150, 0, 500);
 
@@ -122,60 +127,137 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     }
 
     public bool IsPlaying => _isPlaying;
-    public string ActiveSource => _activeSource;
     public IReadOnlyList<string> AvailableSources => _lyricsService.AvailableSources;
     public string? GetCurrentTrackId() => _loadedTrackId;
     public event Action? LoadingFlash;
     public event Action<bool>? IsPlayingChanged;
+    public event Action? SourceStateChanged;
+    public event Action<TrackInfo>? LocalLyricsMissing;
 
     public bool IsRunning => _timer.Enabled;
 
-    public bool IsAuthenticated => _authService.IsAuthenticated;
+    public bool IsAuthenticated => _activePlaybackSource?.IsConnected ?? false;
+
+    /// <summary>当前播放进度来源（可插拔的播放来源抽象）。</summary>
+    public IPlaybackSource? ActivePlaybackSource => _activePlaybackSource;
+
+    /// <summary>当前歌词来源名称（"LRCLIB" / "Netease" / "Local" 等），与公开 API 兼容。</summary>
+    public string ActiveSource => _lyricsActiveSource;
+
+    public bool IsSourceConnected => _activePlaybackSource?.IsConnected ?? false;
 
     public async Task<bool> TryRestoreSessionAsync()
     {
-        if (!_authService.IsAuthenticated)
+        if (_activePlaybackSource is null) return false;
+        if (!_activePlaybackSource.IsAvailable)
         {
+            StatusText = $"来源不可用：{_activePlaybackSource.DisplayName}";
             return false;
         }
 
-        if (!await _authService.TryRestoreSessionAsync().ConfigureAwait(false))
+        try
         {
-            ResetDisplay("登录已过期，请重新登录");
+            await _activePlaybackSource.ConnectAsync().ConfigureAwait(false);
+            StatusText = $"已连接 {_activePlaybackSource.DisplayName}";
+            SourceStateChanged?.Invoke();
+            return true;
+        }
+        catch
+        {
+            StatusText = $"请先连接 {_activePlaybackSource.DisplayName}";
             return false;
         }
-
-        StatusText = "已连接 Spotify";
-        return true;
     }
 
-    public async Task LoginAsync()
+    public async Task SetActiveSourceAsync(string id, bool restoreOnly = false)
     {
-        if (_authService.IsAuthenticated)
+        if (_activePlaybackSource is { } current
+            && string.Equals(current.Id, id, StringComparison.Ordinal)
+            && current.IsConnected)
         {
-            await _authService.EnsureAuthenticatedAsync().ConfigureAwait(false);
-        }
-        else
-        {
-            await _authService.LoginInteractiveAsync().ConfigureAwait(false);
+            return;
         }
 
-        StatusText = "已连接 Spotify";
+        Stop();
+        ClearLyrics();
+
+        var previous = _activePlaybackSource;
+        var next = _registry.Get(id);
+        if (next is null)
+        {
+            _activePlaybackSource = null;
+            StatusText = "未知播放来源";
+            SourceStateChanged?.Invoke();
+            return;
+        }
+
+        if (!next.IsAvailable)
+        {
+            _activePlaybackSource = next;
+            StatusText = $"来源不可用：{next.DisplayName}";
+            SourceStateChanged?.Invoke();
+            return;
+        }
+
+        _activePlaybackSource = next;
+        try
+        {
+            await next.ConnectAsync().ConfigureAwait(false);
+            StatusText = $"已连接 {next.DisplayName}";
+            Start();
+        }
+        catch (Exception ex)
+        {
+            _activePlaybackSource = previous;
+            StatusText = $"连接 {next.DisplayName} 失败：{ex.Message}";
+        }
+
+        SourceStateChanged?.Invoke();
+
+        if (!restoreOnly && _activePlaybackSource is { } persisted && persisted == next && next.IsConnected)
+        {
+            try
+            {
+                new PlaybackStateStore().Save(new PlaybackSettings { ActiveSource = next.Id });
+            }
+            catch
+            {
+                // Persist failure is non-fatal.
+            }
+        }
+    }
+
+    public Task LoginAsync()
+    {
+        if (_activePlaybackSource is null)
+        {
+            throw new InvalidOperationException("尚未选择播放来源。");
+        }
+        return _activePlaybackSource.ConnectAsync();
     }
 
     public void Logout()
     {
         Stop();
-        _authService.Logout();
-        ResetDisplay("已退出 Spotify 登录");
+        _activePlaybackSource?.Disconnect();
+        ResetDisplay("已断开当前播放来源");
+        SourceStateChanged?.Invoke();
     }
 
     public void Start()
     {
+        if (_activePlaybackSource is null || !_activePlaybackSource.IsConnected)
+        {
+            StatusText = _activePlaybackSource is null
+                ? "未配置播放来源"
+                : $"请先连接 {_activePlaybackSource.DisplayName}";
+            return;
+        }
+
         if (!_timer.Enabled)
         {
             _timer.Start();
-            StatusText = _authService.IsAuthenticated ? "正在监听播放…" : "请先登录 Spotify";
+            StatusText = "正在监听播放…";
         }
     }
 
@@ -196,7 +278,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
     public async Task SetSourceAsync(string sourceName)
     {
-        _activeSource = sourceName;
+        _lyricsActiveSource = sourceName;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ActiveSource)));
         await ReloadCurrentTrackAsync().ConfigureAwait(false);
     }
@@ -207,7 +289,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         await ReloadCurrentTrackAsync().ConfigureAwait(false);
     }
 
-    private async Task ReloadCurrentTrackAsync()
+    internal async Task ReloadCurrentTrackAsync()
     {
         if (_loadedTrackId is null) return;
 
@@ -220,14 +302,14 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         };
 
         LyricsResult? lyrics;
-        if (!string.IsNullOrWhiteSpace(_activeSource))
+        if (!string.IsNullOrWhiteSpace(_lyricsActiveSource))
         {
-            if (_activeSource != "Local")
+            if (_lyricsActiveSource != "Local")
             {
-                StatusText = $"正在尝试 {_activeSource}…";
+                StatusText = $"正在尝试 {_lyricsActiveSource}…";
                 LoadingFlash?.Invoke();
             }
-            lyrics = await _lyricsService.FetchFromSourceAsync(currentTrack, _activeSource).ConfigureAwait(false);
+            lyrics = await _lyricsService.FetchFromSourceAsync(currentTrack, _lyricsActiveSource).ConfigureAwait(false);
         }
         else
         {
@@ -238,21 +320,37 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
         _syncEngine.SetDurationMs(_trackDurationMs);
         _syncEngine.Load(lyrics);
-        LyricsSource = lyrics?.Source ?? (string.IsNullOrEmpty(_activeSource) ? string.Empty : _activeSource);
+        LyricsSource = lyrics?.Source ?? (string.IsNullOrEmpty(_lyricsActiveSource) ? string.Empty : _lyricsActiveSource);
         StatusText = lyrics is null ? "暂无歌词" : string.Empty;
+
+        if (_lyricsActiveSource == "Local" && lyrics is null)
+        {
+            bool added;
+            lock (_localPromptLock)
+            {
+                added = _localPromptedTrackIds.Add(currentTrack.Id);
+            }
+            if (added && _lyricsBehavior.Current.PromptForLocalLyricsOnMissing)
+            {
+                LocalLyricsMissing?.Invoke(currentTrack);
+            }
+        }
     }
 
     private async Task PollAsync()
     {
         try
         {
-            if (!_authService.IsAuthenticated)
+            if (_activePlaybackSource is null || !_activePlaybackSource.IsConnected)
             {
-                ResetDisplay("请先登录 Spotify");
+                Stop();
+                StatusText = _activePlaybackSource is null
+                    ? "未配置播放来源"
+                    : $"请先连接 {_activePlaybackSource.DisplayName}";
                 return;
             }
 
-            var playback = await _playbackService.GetCurrentPlaybackAsync().ConfigureAwait(false);
+            var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(false);
             if (playback is null)
             {
                 var wasPlaying = _isPlaying;
@@ -305,7 +403,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         var lyrics = await _lyricsService.FetchLyricsAsync(track).ConfigureAwait(false);
         _syncEngine.SetDurationMs(_trackDurationMs);
         _syncEngine.Load(lyrics);
-        LyricsSource = lyrics?.Source ?? (string.IsNullOrEmpty(_activeSource) ? string.Empty : _activeSource);
+        LyricsSource = lyrics?.Source ?? (string.IsNullOrEmpty(_lyricsActiveSource) ? string.Empty : _lyricsActiveSource);
         StatusText = lyrics is null ? "暂无歌词" : string.Empty;
     }
 
@@ -360,6 +458,10 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     {
         ClearLyricLines();
         _syncEngine.Load(null);
+        lock (_localPromptLock)
+        {
+            _localPromptedTrackIds.Clear();
+        }
     }
 
     private void ClearLyricLines()
@@ -385,19 +487,25 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    internal void InjectLoadedTrack(TrackInfo track)
+    {
+        _loadedTrackId = track.Id;
+        _trackDurationMs = track.DurationMs;
+        TrackTitle = track.Name;
+        ArtistName = track.Artist;
+    }
+
+    internal void ClearLocalPromptState()
+    {
+        lock (_localPromptLock)
+        {
+            _localPromptedTrackIds.Clear();
+        }
+    }
+
     public void Dispose()
     {
         _timer.Stop();
         _timer.Dispose();
-
-        if (_playbackService is IDisposable disposablePlayback)
-        {
-            disposablePlayback.Dispose();
-        }
-
-        if (_authService is IDisposable disposableAuth)
-        {
-            disposableAuth.Dispose();
-        }
     }
 }

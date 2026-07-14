@@ -17,19 +17,29 @@ public static class ConfigurationLoader
         baseDirectory ??= AppContext.BaseDirectory;
         var path = Path.Combine(baseDirectory, "appsettings.json");
 
-        if (!File.Exists(path))
-        {
-            return new AppSettings();
-        }
+        var settings = File.Exists(path)
+            ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), JsonOptions) ?? new AppSettings()
+            : new AppSettings();
 
-        var json = File.ReadAllText(path);
-        var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
-
-        // 环境变量覆盖：SPOTIFY_CLIENT_ID > appsettings.json
+        // Environment override for Spotify client id.
         var envClientId = Environment.GetEnvironmentVariable("SPOTIFY_CLIENT_ID");
         if (!string.IsNullOrWhiteSpace(envClientId))
         {
             settings.Spotify.ClientId = envClientId;
+        }
+
+        // Layer playback-state.json on top of appsettings.json.
+        try
+        {
+            var playback = new PlaybackStateStore().Load();
+            if (!string.IsNullOrWhiteSpace(playback.ActiveSource))
+            {
+                settings.Playback.ActiveSource = playback.ActiveSource;
+            }
+        }
+        catch
+        {
+            // Ignore — keep the appsettings.json value.
         }
 
         return settings;

@@ -7,20 +7,28 @@ public class StyleSettingsTabRouterTests
 {
     [Theory]
     [InlineData(StyleSettingsTabRouter.AppearanceTag, "AppearancePage")]
-    [InlineData(StyleSettingsTabRouter.LayoutTag, "LayoutPage")]
-    [InlineData(StyleSettingsTabRouter.ColorTag, "ColorPage")]
     [InlineData(StyleSettingsTabRouter.SyncTag, "SyncPage")]
     [InlineData(StyleSettingsTabRouter.AboutTag, "AboutPage")]
+    [InlineData(StyleSettingsTabRouter.PlaybackSourceTag, "PlaybackSourcePage")]
+    [InlineData(StyleSettingsTabRouter.LyricsTag, "LyricsPage")]
     public void Resolve_KnownTag_ReturnsMatchingPageName(string tag, string expectedPage)
     {
         Assert.Equal(expectedPage, StyleSettingsTabRouter.Resolve(tag));
     }
 
     [Theory]
+    [InlineData(StyleSettingsTabRouter.LayoutTag)]
+    [InlineData(StyleSettingsTabRouter.ColorTag)]
+    public void Resolve_MergedTags_ReturnsNullAfterMerge(string tag)
+    {
+        Assert.Null(StyleSettingsTabRouter.Resolve(tag));
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    [InlineData("Appearance")]      // wrong case
+    [InlineData("Appearance")]
     [InlineData("APPEARANCE")]
     [InlineData("settings")]
     [InlineData("foo bar")]
@@ -43,9 +51,11 @@ public class StyleSettingsTabRouterTests
     {
         Assert.Equal(5, StyleSettingsTabRouter.KnownTags.Count);
         Assert.Contains(StyleSettingsTabRouter.AppearanceTag, StyleSettingsTabRouter.KnownTags);
-        Assert.Contains(StyleSettingsTabRouter.LayoutTag, StyleSettingsTabRouter.KnownTags);
-        Assert.Contains(StyleSettingsTabRouter.ColorTag, StyleSettingsTabRouter.KnownTags);
+        Assert.DoesNotContain(StyleSettingsTabRouter.LayoutTag, StyleSettingsTabRouter.KnownTags);
+        Assert.DoesNotContain(StyleSettingsTabRouter.ColorTag, StyleSettingsTabRouter.KnownTags);
         Assert.Contains(StyleSettingsTabRouter.SyncTag, StyleSettingsTabRouter.KnownTags);
         Assert.Contains(StyleSettingsTabRouter.AboutTag, StyleSettingsTabRouter.KnownTags);
+        Assert.Contains(StyleSettingsTabRouter.PlaybackSourceTag, StyleSettingsTabRouter.KnownTags);
+        Assert.Contains(StyleSettingsTabRouter.LyricsTag, StyleSettingsTabRouter.KnownTags);
     }
 }

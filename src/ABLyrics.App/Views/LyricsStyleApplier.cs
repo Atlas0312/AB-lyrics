@@ -8,6 +8,8 @@ namespace ABLyrics.App.Views;
 
 internal static class LyricsStyleApplier
 {
+    private const double PrimaryLineAlpha = 1.0;
+
     public static void ApplyAppBar(
         Window window,
         Border chrome,
@@ -29,11 +31,14 @@ internal static class LyricsStyleApplier
             style.PaddingRight,
             style.PaddingBottom);
 
-        ApplyTextStyle(trackTitle, fontFamily, style.FontSize * 0.72, FontWeights.Normal, "#F5F5F5", style.LetterSpacing);
-        ApplyTextStyle(artistName, fontFamily, style.FontSize * 0.62, FontWeights.Normal, "#B0B0B0", style.LetterSpacing);
-        ApplyTextStyle(primaryLine, fontFamily, style.FontSize, FontWeights.Normal, "#FFFFFF", style.LetterSpacing);
-        ApplyTextStyle(secondaryLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, "#B8B8B8", style.LetterSpacing);
-        ApplyTextStyle(sourceTag, fontFamily, style.FontSize * 0.56, FontWeights.Normal, "#7AD7FF", style.LetterSpacing);
+        var fg = style.ForegroundColor;
+        var secondaryAlpha = style.ForegroundOpacity;
+
+        ApplyTextStyle(trackTitle, fontFamily, style.SongInfoFontSize, FontWeights.SemiBold, fg, PrimaryLineAlpha, style.LetterSpacing);
+        ApplyTextStyle(artistName, fontFamily, style.SongInfoFontSize, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
+        ApplyTextStyle(primaryLine, fontFamily, style.FontSize, FontWeights.Normal, fg, PrimaryLineAlpha, style.LetterSpacing);
+        ApplyTextStyle(secondaryLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
+        ApplyTextStyle(sourceTag, fontFamily, style.FontSize * 0.72, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
 
         secondaryLine.Visibility = style.LineCount >= 2 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -42,6 +47,7 @@ internal static class LyricsStyleApplier
         Border chrome,
         TextBlock primaryLine,
         TextBlock secondaryLine,
+        TextBlock? englishLine,
         DisplayStyleSettings style)
     {
         var fontFamily = CreateFontFamily(style.FontFamily);
@@ -52,9 +58,18 @@ internal static class LyricsStyleApplier
             style.PaddingRight,
             style.PaddingBottom);
 
-        ApplyTextStyle(primaryLine, fontFamily, style.FontSize, FontWeights.Normal, "#FFFFFF", style.LetterSpacing);
-        ApplyTextStyle(secondaryLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, "#B8B8B8", style.LetterSpacing);
+        var fg = style.ForegroundColor;
+        var secondaryAlpha = style.ForegroundOpacity;
+
+        ApplyTextStyle(primaryLine, fontFamily, style.FontSize, FontWeights.Normal, fg, PrimaryLineAlpha, style.LetterSpacing);
+        ApplyTextStyle(secondaryLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
         secondaryLine.Visibility = style.LineCount >= 2 ? Visibility.Visible : Visibility.Collapsed;
+
+        if (englishLine is not null)
+        {
+            ApplyTextStyle(englishLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
+            englishLine.Visibility = Visibility.Visible;
+        }
     }
 
     public static void ApplyOverlay(
@@ -80,10 +95,13 @@ internal static class LyricsStyleApplier
         window.MinHeight = overlayHeight;
         window.Height = overlayHeight;
 
-        ApplyTextStyle(trackTitle, fontFamily, style.FontSize * 0.62, FontWeights.Normal, "#B0B0B0", style.LetterSpacing);
-        ApplyTextStyle(artistName, fontFamily, style.FontSize * 0.62, FontWeights.Normal, "#B0B0B0", style.LetterSpacing);
-        ApplyTextStyle(primaryLine, fontFamily, style.FontSize, FontWeights.Normal, "#FFFFFF", style.LetterSpacing);
-        ApplyTextStyle(secondaryLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, "#B8B8B8", style.LetterSpacing);
+        var fg = style.ForegroundColor;
+        var secondaryAlpha = style.ForegroundOpacity;
+
+        ApplyTextStyle(trackTitle, fontFamily, style.SongInfoFontSize, FontWeights.SemiBold, fg, PrimaryLineAlpha, style.LetterSpacing);
+        ApplyTextStyle(artistName, fontFamily, style.SongInfoFontSize, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
+        ApplyTextStyle(primaryLine, fontFamily, style.FontSize, FontWeights.Normal, fg, PrimaryLineAlpha, style.LetterSpacing);
+        ApplyTextStyle(secondaryLine, fontFamily, style.FontSize * 0.82, FontWeights.Normal, fg, secondaryAlpha, style.LetterSpacing);
 
         secondaryLine.Visibility = style.LineCount >= 2 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -94,13 +112,14 @@ internal static class LyricsStyleApplier
         double fontSize,
         FontWeight fontWeight,
         string colorHex,
+        double alphaMultiplier,
         double letterSpacing)
     {
         var resolvedSize = Math.Max(8, fontSize);
         textBlock.FontFamily = fontFamily;
         textBlock.FontSize = resolvedSize;
         textBlock.FontWeight = fontWeight;
-        textBlock.Foreground = CreateBrush(colorHex);
+        textBlock.Foreground = CreateForegroundBrush(colorHex, alphaMultiplier);
         TextOptions.SetTextFormattingMode(textBlock, TextFormattingMode.Display);
         TextOptions.SetTextRenderingMode(textBlock, TextRenderingMode.ClearType);
         LetterSpacingHelper.SetLetterSpacing(textBlock, letterSpacing);
@@ -125,10 +144,11 @@ internal static class LyricsStyleApplier
         return new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
     }
 
-    private static Brush CreateBrush(string hex)
+    internal static Brush CreateForegroundBrush(string hex, double alphaMultiplier = 1.0)
     {
         var color = ParseColor(hex);
-        return new SolidColorBrush(Color.FromRgb(color.R, color.G, color.B));
+        var alpha = (byte)Math.Clamp((int)Math.Round(alphaMultiplier * 255), 0, 255);
+        return new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
     }
 
     public static void ApplyFlash(Border chrome, double opacity)

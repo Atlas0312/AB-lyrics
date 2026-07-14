@@ -6,6 +6,7 @@ public sealed class AppSettings
     public NetEaseSettings NetEase { get; init; } = new();
     public LyricsSettings Lyrics { get; init; } = new();
     public UiSettings Ui { get; init; } = new();
+    public PlaybackSettings Playback { get; init; } = new();
 }
 
 public sealed class SpotifySettings

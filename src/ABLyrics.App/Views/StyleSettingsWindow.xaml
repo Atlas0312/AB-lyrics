@@ -17,7 +17,6 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 左侧导航：220 宽的 NavigationView -->
         <ui:NavigationView x:Name="NavView"
                            Grid.Row="0" Grid.Column="0"
                            Width="220"
@@ -25,32 +24,20 @@
                            PaneDisplayMode="Left"
                            OpenPaneLength="220">
             <ui:NavigationView.MenuItems>
-                <!--
-                  注意：不能用 NavigationView.ItemInvoked + NavView.SelectedItem 切页。
-                  原因：WPF-UI 3.1.x 的 NavigationViewItem.OnClick() 里只有在
-                        TargetPageType 不为 null 时才会调用 OnNavigationViewItemClick，
-                        而我们这里只设了 TargetPageTag，没有 page 类，导致
-                        SelectedItem 永远不被同步更新 → handler 看到 NavView.SelectedItem == null
-                        → 所有 ScrollViewer 都被折叠 → 用户看到空白，菜单"失效"。
-                  修复：直接订阅每个 NavigationViewItem 的 Click 事件，由 OnMenuItemClick
-                        处理 TargetPageTag -> ScrollViewer 路由。
-                -->
                 <ui:NavigationViewItem Content="外观" TargetPageTag="appearance" Click="OnMenuItemClick" />
-                <ui:NavigationViewItem Content="布局" TargetPageTag="layout" Click="OnMenuItemClick" />
-                <ui:NavigationViewItem Content="颜色" TargetPageTag="color" Click="OnMenuItemClick" />
                 <ui:NavigationViewItem Content="同步" TargetPageTag="sync" Click="OnMenuItemClick" />
                 <ui:NavigationViewItem Content="关于" TargetPageTag="about" Click="OnMenuItemClick" />
+                <ui:NavigationViewItem Content="播放来源" TargetPageTag="playback-source" Click="OnMenuItemClick" />
+                <ui:NavigationViewItem Content="歌词" TargetPageTag="lyrics" Click="OnMenuItemClick" />
             </ui:NavigationView.MenuItems>
         </ui:NavigationView>
 
-        <!-- 右侧 5 个页面（Column 1，与 NavigationView 不重叠） -->
         <Grid Grid.Row="0" Grid.Column="1">
 
-            <!-- 外观页 -->
             <ScrollViewer x:Name="AppearancePage" Visibility="Visible"
                           VerticalScrollBarVisibility="Auto" Padding="24">
                 <StackPanel>
-                    <TextBlock Text="字体与排版" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16" />
+                    <!-- 外观分块 -->
                     <ui:Card Padding="20" Margin="0,0,0,16">
                         <StackPanel>
                             <TextBlock Text="字体" Margin="0,0,0,8" />
@@ -65,7 +52,7 @@
                                       PreviewMouseLeftButtonDown="OnFontComboPreviewMouseLeftButtonDown"
                                       PreviewKeyDown="OnFontComboPreviewKeyDown" />
 
-                            <TextBlock Text="字号" Margin="0,0,0,8" />
+                            <TextBlock Text="歌词字号" Margin="0,0,0,8" />
                             <DockPanel Margin="0,0,0,16">
                                 <TextBlock x:Name="FontSizeLabel"
                                            DockPanel.Dock="Right"
@@ -75,6 +62,20 @@
                                 <Slider x:Name="FontSizeSlider"
                                         Minimum="12"
                                         Maximum="36"
+                                        TickFrequency="1"
+                                        IsSnapToTickEnabled="True" />
+                            </DockPanel>
+
+                            <TextBlock Text="歌曲信息字号" Margin="0,0,0,8" />
+                            <DockPanel Margin="0,0,0,16">
+                                <TextBlock x:Name="SongInfoFontSizeLabel"
+                                           DockPanel.Dock="Right"
+                                           Width="40"
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Right" />
+                                <Slider x:Name="SongInfoFontSizeSlider"
+                                        Minimum="8"
+                                        Maximum="24"
                                         TickFrequency="1"
                                         IsSnapToTickEnabled="True" />
                             </DockPanel>
@@ -95,36 +96,11 @@
                         </StackPanel>
                     </ui:Card>
 
-                    <ui:Card Padding="20">
-                        <StackPanel>
-                            <TextBlock Text="预览" FontWeight="SemiBold" Margin="0,0,0,12" />
-                            <Border x:Name="PreviewBorder"
-                                    CornerRadius="6"
-                                    Padding="12,6">
-                                <StackPanel>
-                                    <TextBlock x:Name="PreviewSecondary"
-                                               Text="上一行歌词预览"
-                                               TextAlignment="Center"
-                                               Margin="0,0,0,2" />
-                                    <TextBlock x:Name="PreviewPrimary"
-                                               Text="当前行歌词预览"
-                                               TextAlignment="Center" />
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
-                    </ui:Card>
-                </StackPanel>
-            </ScrollViewer>
-
-            <!-- 布局页 -->
-            <ScrollViewer x:Name="LayoutPage" Visibility="Collapsed"
-                          VerticalScrollBarVisibility="Auto" Padding="24">
-                <StackPanel>
-                    <TextBlock Text="窗口布局" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16" />
+                    <!-- 布局分块 -->
                     <ui:Card Padding="20" Margin="0,0,0,16">
                         <StackPanel>
                             <TextBlock Text="框高度 (px)" Margin="0,0,0,8" />
-                            <DockPanel>
+                            <DockPanel Margin="0,0,0,16">
                                 <TextBlock x:Name="BarHeightLabel"
                                            DockPanel.Dock="Right"
                                            Width="40"
@@ -135,13 +111,9 @@
                                         TickFrequency="1"
                                         IsSnapToTickEnabled="True" />
                             </DockPanel>
-                        </StackPanel>
-                    </ui:Card>
 
-                    <ui:Card Padding="20" Margin="0,0,0,16">
-                        <StackPanel>
                             <TextBlock Text="四周边距 (px)" FontWeight="SemiBold" Margin="0,0,0,12" />
-                            <Grid>
+                            <Grid Margin="0,0,0,16">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
@@ -167,11 +139,7 @@
                                     <ui:TextBox x:Name="PaddingBottomBox" />
                                 </StackPanel>
                             </Grid>
-                        </StackPanel>
-                    </ui:Card>
 
-                    <ui:Card Padding="20">
-                        <StackPanel>
                             <TextBlock Text="显示行数" Margin="0,0,0,12" />
                             <StackPanel Orientation="Horizontal">
                                 <RadioButton x:Name="OneLineRadio"
@@ -184,25 +152,17 @@
                             </StackPanel>
                         </StackPanel>
                     </ui:Card>
-                </StackPanel>
-            </ScrollViewer>
 
-            <!-- 颜色页 -->
-            <ScrollViewer x:Name="ColorPage" Visibility="Collapsed"
-                          VerticalScrollBarVisibility="Auto" Padding="24">
-                <StackPanel>
-                    <TextBlock Text="颜色与背景" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16" />
+                    <!-- 颜色分块 -->
                     <ui:Card Padding="20" Margin="0,0,0,16">
                         <StackPanel>
+                            <TextBlock Text="背景" FontWeight="SemiBold" Margin="0,0,0,12" />
                             <TextBlock Text="底色 (RGB Hex)" Margin="0,0,0,8" />
-                            <ui:TextBox x:Name="BackgroundColorBox" />
-                            <TextBlock Text="例如 #101010" FontSize="11" Opacity="0.6" Margin="0,6,0,0" />
-                        </StackPanel>
-                    </ui:Card>
-                    <ui:Card Padding="20">
-                        <StackPanel>
+                            <ui:TextBox x:Name="BackgroundColorBox" Margin="0,0,0,4" />
+                            <TextBlock Text="例如 #101010" FontSize="11" Opacity="0.6" Margin="0,0,0,12" />
+
                             <TextBlock Text="背景透明度" Margin="0,0,0,8" />
-                            <DockPanel>
+                            <DockPanel Margin="0,0,0,12">
                                 <TextBlock x:Name="OpacityLabel"
                                            DockPanel.Dock="Right"
                                            Width="48"
@@ -212,12 +172,80 @@
                                         Maximum="1"
                                         TickFrequency="0.05" />
                             </DockPanel>
+
+                            <TextBlock Text="叠加基准色（透明时显示此色）" FontSize="11" Opacity="0.7" Margin="0,0,0,4" />
+                            <ui:TextBox x:Name="OverlayBaseColorBox" />
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- 颜色分块：单一前景色 + 推荐 swatch -->
+                    <ui:Card Padding="20" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="前景色" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <TextBlock Text="所有前景元素使用此色，副级元素（歌手/副歌词/曲名）按下方透明度自动变暗。点击右侧方块可直接填入 WCAG AA 推荐值。" TextWrapping="Wrap" Opacity="0.6" FontSize="11" Margin="0,0,0,12" />
+
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="40" />
+                                    <ColumnDefinition Width="40" />
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox x:Name="ForegroundColorBox" Grid.Column="0" />
+                                <ui:Button x:Name="RecommendForegroundWhiteButton" Grid.Column="1"
+                                           Margin="4,0,0,0" Height="32" Padding="0"
+                                           Tag="white" Click="OnRecommendSwatchClick"
+                                           ToolTip="填入白色（WCAG AA 推荐）">
+                                    <Border Width="20" Height="20" Background="White" BorderBrush="#888" BorderThickness="1" />
+                                </ui:Button>
+                                <ui:Button x:Name="RecommendForegroundBlackButton" Grid.Column="2"
+                                           Margin="4,0,0,0" Height="32" Padding="0"
+                                           Tag="black" Click="OnRecommendSwatchClick"
+                                           ToolTip="填入黑色（WCAG AA 推荐）">
+                                    <Border Width="20" Height="20" Background="Black" BorderBrush="#888" BorderThickness="1" />
+                                </ui:Button>
+                            </Grid>
+
+                            <TextBlock Text="副级元素透明度" Margin="0,0,0,8" />
+                            <DockPanel>
+                                <TextBlock x:Name="ForegroundOpacityLabel"
+                                           DockPanel.Dock="Right"
+                                           Width="48"
+                                           VerticalAlignment="Center" />
+                                <Slider x:Name="ForegroundOpacitySlider"
+                                        Minimum="0.3"
+                                        Maximum="1.0"
+                                        TickFrequency="0.05"
+                                        IsSnapToTickEnabled="True" />
+                            </DockPanel>
+                        </StackPanel>
+                    </ui:Card>
+
+                    <!-- 预览 -->
+                    <ui:Card Padding="20">
+                        <StackPanel>
+                            <TextBlock Text="预览" FontWeight="SemiBold" Margin="0,0,0,12" />
+                            <Border x:Name="PreviewBorder"
+                                    CornerRadius="6"
+                                    Padding="12,6">
+                                <StackPanel>
+                                    <TextBlock x:Name="PreviewSecondary"
+                                               Text="上一行歌词预览"
+                                               TextAlignment="Center"
+                                               Margin="0,0,0,2" />
+                                    <TextBlock x:Name="PreviewPrimary"
+                                               Text="当前行歌词预览"
+                                               TextAlignment="Center" />
+                                    <TextBlock x:Name="PreviewEnglish"
+                                               Text="And the preview line in English"
+                                               TextAlignment="Center"
+                                               Margin="0,2,0,0" />
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ui:Card>
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- 同步页 -->
             <ScrollViewer x:Name="SyncPage" Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto" Padding="24">
                 <StackPanel>
@@ -244,7 +272,85 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- 关于页 -->
+            <ScrollViewer x:Name="PlaybackSourcePage" Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto" Padding="24">
+                <StackPanel>
+                    <TextBlock Text="播放进度来源" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16" />
+                    <ui:Card Padding="20" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="活动来源" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <TextBlock x:Name="ActiveSourceNameText" Text="(未选择)" Margin="0,0,0,4" />
+                            <TextBlock x:Name="ActiveSourceStatusText" Opacity="0.7" Margin="0,0,0,12" />
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button x:Name="ConnectSourceButton" Content="连接"
+                                           Width="84" Margin="0,0,8,0" Click="OnConnectSourceClick" />
+                                <ui:Button x:Name="DisconnectSourceButton" Content="断开"
+                                           Width="84" Click="OnDisconnectSourceClick" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ui:Card>
+
+                    <ui:Card x:Name="SpotifyDetailCard" Padding="20" Margin="0,0,0,16" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Text="Spotify" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <TextBlock x:Name="SpotifyStatusDetailText" Opacity="0.7" Margin="0,0,0,12" />
+                            <TextBlock x:Name="SpotifyUnavailableHint"
+                                       TextWrapping="Wrap" FontSize="12" Opacity="0.7"
+                                       Visibility="Collapsed"
+                                       Text="请在 appsettings.json 中配置 Spotify.ClientId，然后重启应用。" />
+                        </StackPanel>
+                    </ui:Card>
+
+                    <ui:Card Padding="20">
+                        <StackPanel>
+                            <TextBlock Text="可用来源" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <ItemsControl x:Name="AvailableSourcesList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="8" Margin="0,0,0,8" CornerRadius="4"
+                                                Background="{DynamicResource ControlFillColorDefaultBrush}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding StatusText}" Opacity="0.7" FontSize="12" />
+                                                </StackPanel>
+                                                <ui:Button Grid.Column="1" Content="使用此来源"
+                                                           Click="OnUseSourceClick"
+                                                           Tag="{Binding Id}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ui:Card>
+                </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer x:Name="LyricsPage" Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto" Padding="24">
+                <StackPanel>
+                    <TextBlock Text="歌词" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,16" />
+                    <ui:Card Padding="20" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="本地歌词" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <DockPanel>
+                                <ui:ToggleSwitch x:Name="PromptLocalMissingSwitch"
+                                                 DockPanel.Dock="Right"
+                                                 Content="缺失时弹出选择对话框"
+                                                 Click="OnPromptLocalMissingToggled" />
+                            </DockPanel>
+                            <TextBlock TextWrapping="Wrap" Opacity="0.7" FontSize="12" Margin="0,8,0,0"
+                                       Text="切换到本地歌词源时，若在歌词库找不到当前曲目，会弹出文件选择框。关闭后不再提示，需要时可使用顶部 AppBar 菜单「Local ▸ 导入歌词文件…」。" />
+                        </StackPanel>
+                    </ui:Card>
+                </StackPanel>
+            </ScrollViewer>
+
             <ScrollViewer x:Name="AboutPage" Visibility="Collapsed"
                           VerticalScrollBarVisibility="Auto" Padding="24">
                 <StackPanel>
@@ -265,7 +371,6 @@
             </ScrollViewer>
         </Grid>
 
-        <!-- 底部按钮行（跨两列） -->
         <Border Grid.Row="1" Grid.ColumnSpan="2" Padding="20,12"
                 Background="{DynamicResource ControlFillColorDefaultBrush}">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

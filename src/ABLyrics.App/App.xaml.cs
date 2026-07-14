@@ -3,6 +3,7 @@ using System.Windows.Threading;
 using ABLyrics.App.Configuration;
 using ABLyrics.App.Services;
 using ABLyrics.App.Services.Lyrics;
+using ABLyrics.App.Services.Playback;
 using ABLyrics.App.Services.Spotify;
 using ABLyrics.App.Views;
 using Forms = System.Windows.Forms;
@@ -15,14 +16,32 @@ public partial class App : System.Windows.Application
     public static AppSettings Settings { get; private set; } = new();
     public static PlaybackCoordinator Coordinator { get; private set; } = null!;
     public static DisplaySettingsService DisplaySettings { get; private set; } = null!;
+    public static LyricsBehaviorService LyricsBehavior { get; private set; } = null!;
+
+    public static PlaybackSourceRegistry GetPlaybackSourceRegistry()
+    {
+        var app = (App)Current;
+        return app._sourceRegistry ?? throw new InvalidOperationException("Registry 尚未初始化。");
+    }
+
+    internal static Services.Lyrics.LocalLyricsProvider GetLocalLyricsProvider()
+    {
+        return new Services.Lyrics.LocalLyricsProvider(Settings);
+    }
+
+    private void OnCoordinatorSourceStateChanged()
+    {
+        UpdateTooltip();
+        UpdateMenuStates();
+    }
 
     private Forms.NotifyIcon? _trayIcon;
     private Forms.ContextMenuStrip? _trayContextMenu;
     private AppBarWindow? _appBarWindow;
     private OverlayWindow? _overlayWindow;
 
-    private Forms.ToolStripMenuItem? _loginMenuItem;
     private Forms.ToolStripMenuItem? _overlayToggle;
+    private PlaybackSourceRegistry? _sourceRegistry;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -44,8 +63,19 @@ public partial class App : System.Windows.Application
         var authService = new SpotifyAuthService(Settings);
         var playbackService = new SpotifyPlaybackService(authService);
         var lyricsService = new LyricsService(Settings);
-        Coordinator = new PlaybackCoordinator(authService, playbackService, lyricsService, DisplaySettings);
+        LyricsBehavior = new LyricsBehaviorService(new LyricsBehaviorSettings());
+
+        _sourceRegistry = new PlaybackSourceRegistry();
+        _sourceRegistry.Register(new SpotifyPlaybackSource(authService, playbackService, Settings));
+
+        Coordinator = new PlaybackCoordinator(
+            _sourceRegistry,
+            Settings.Playback.ActiveSource,
+            lyricsService,
+            LyricsBehavior,
+            DisplaySettings);
         Coordinator.IsPlayingChanged += OnIsPlayingChanged;
+        Coordinator.SourceStateChanged += () => Dispatcher.BeginInvoke(OnCoordinatorSourceStateChanged);
 
         CreateTrayIcon();
 
@@ -61,25 +91,18 @@ public partial class App : System.Windows.Application
             if (await Coordinator.TryRestoreSessionAsync())
             {
                 Coordinator.Start();
-                UpdateMenuStates();
-                UpdateTooltip();
-
-                if (Coordinator.IsPlaying)
-                {
-                    ShowAppBar();
-                }
-            }
-            else
-            {
-                UpdateTooltip();
             }
         }
         catch (Exception ex)
         {
             if (DevExceptionReporter.IsEnabled)
             {
-                DevExceptionReporter.Show(ex, "Spotify 会话恢复失败");
+                DevExceptionReporter.Show(ex, "播放来源会话恢复失败");
             }
+        }
+        finally
+        {
+            UpdateMenuStates();
             UpdateTooltip();
         }
     }
@@ -114,18 +137,14 @@ public partial class App : System.Windows.Application
         menu.Items.Add(new Forms.ToolStripMenuItem("ABLyrics") { Enabled = false });
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        _loginMenuItem = new Forms.ToolStripMenuItem("登录 Spotify");
-        _loginMenuItem.Click += (_, _) => OnLoginLogoutClick();
-        menu.Items.Add(_loginMenuItem);
-        menu.Items.Add(new Forms.ToolStripSeparator());
-
         _overlayToggle = new Forms.ToolStripMenuItem("悬浮歌词");
         _overlayToggle.Click += (_, _) => ToggleOverlay();
+        menu.Items.Add(_overlayToggle);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        var styleItem = new Forms.ToolStripMenuItem("样式设置…");
-        styleItem.Click += (_, _) => OnStyleSettingsClick();
-        menu.Items.Add(styleItem);
+        var settingsItem = new Forms.ToolStripMenuItem("设置…");
+        settingsItem.Click += (_, _) => OnStyleSettingsClick();
+        menu.Items.Add(settingsItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         var exitItem = new Forms.ToolStripMenuItem("退出");
@@ -137,9 +156,6 @@ public partial class App : System.Windows.Application
 
     private void UpdateMenuStates()
     {
-        if (_loginMenuItem is null) return;
-
-        _loginMenuItem.Text = Coordinator.IsAuthenticated ? "退出登录" : "登录 Spotify";
         _overlayToggle!.Checked = _overlayWindow is not null;
     }
 
@@ -147,9 +163,15 @@ public partial class App : System.Windows.Application
     {
         if (_trayIcon is null) return;
 
-        if (!Coordinator.IsAuthenticated)
+        if (Coordinator.ActivePlaybackSource is null)
         {
-            _trayIcon.Text = "ABLyrics\n未登录 Spotify";
+            _trayIcon.Text = "ABLyrics\n未配置播放来源";
+            return;
+        }
+
+        if (!Coordinator.IsSourceConnected)
+        {
+            _trayIcon.Text = $"ABLyrics\n请先连接 {Coordinator.ActivePlaybackSource.DisplayName}";
             return;
         }
 
@@ -175,36 +197,6 @@ public partial class App : System.Windows.Application
         }
 
         _trayIcon.Text = tip.Length > 128 ? tip[..125] + "…" : tip;
-    }
-
-    private async void OnLoginLogoutClick()
-    {
-        try
-        {
-            if (Coordinator.IsAuthenticated)
-            {
-                Coordinator.Logout();
-                _appBarWindow?.Close();
-                _appBarWindow = null;
-                _overlayWindow?.Close();
-                _overlayWindow = null;
-            }
-            else
-            {
-                await Coordinator.LoginAsync();
-                Coordinator.Start();
-            }
-        }
-        catch (Exception ex)
-        {
-            DevExceptionReporter.Show(ex, "Spotify 登录/登出失败");
-            System.Windows.MessageBox.Show(ex.Message, "Spotify", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
-        }
-        finally
-        {
-            UpdateMenuStates();
-            UpdateTooltip();
-        }
     }
 
     private void ToggleAppBar()
@@ -262,7 +254,7 @@ public partial class App : System.Windows.Application
     {
         try
         {
-            var window = new StyleSettingsWindow(DisplaySettings, Coordinator);
+            var window = new StyleSettingsWindow(DisplaySettings, Coordinator, LyricsBehavior);
             window.ShowDialog();
         }
         catch (Exception ex)
