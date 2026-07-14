@@ -39,6 +39,18 @@ public sealed class LyricsSyncEngine
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
+    /// <summary>
+    /// 直接喂入已解析的 <see cref="LyricsData"/> 与纯文本行：对比区的多个引擎实例
+    /// 只在候选变更时由调用方 Parse 一次（避免每列重复 Parse 同样的 LRC），
+    /// 再走这个重载跳过 <see cref="LrcParser.Parse"/>。语义与 <see cref="Load"/>
+    /// 在解析之后的状态完全一致。
+    /// </summary>
+    public void LoadParsed(LyricsData? data, string[] plainLines)
+    {
+        _lyricsData = data;
+        _plainLines = plainLines ?? Array.Empty<string>();
+    }
+
     public LyricsFrame GetFrame(long progressMs)
     {
         if (_lyricsData?.Lines is { Count: > 0 } lines)
