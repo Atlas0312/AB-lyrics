@@ -1,0 +1,12 @@
+<UserControl x:Class="ABLyrics.App.Views.CandidateColumnView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border BorderBrush="Gray" BorderThickness="1" Padding="12" Margin="4">
+        <StackPanel>
+            <TextBlock x:Name="HeaderText" FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <TextBlock x:Name="PreviousLineText" Opacity="0.5" Margin="0,4"/>
+            <TextBlock x:Name="CurrentLineText" FontSize="18" FontWeight="Bold" Margin="0,4"/>
+            <TextBlock x:Name="NextLineText" Opacity="0.5" Margin="0,4"/>
+        </StackPanel>
+    </Border>
+</UserControl>
