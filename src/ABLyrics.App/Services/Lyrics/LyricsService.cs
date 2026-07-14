@@ -1,3 +1,4 @@
+using System.IO;
 using Lyricify.Lyrics.Providers.Web.Netease;
 using OpenccNetLib;
 using ABLyrics.App.Configuration;
@@ -15,9 +16,18 @@ public sealed class LyricsService : ILyricsService
     private readonly IReadOnlyList<string> _availableSources;
 
     public LyricsService(AppSettings settings)
+        : this(settings, new LrcLibClient(settings.Lyrics.UserAgent))
+    {
+    }
+
+    /// <summary>
+    /// 测试构造：注入自定义 <see cref="LrcLibClient"/>（例如带
+    /// <see cref="HttpMessageHandler"/> 替身的实例）以模拟 LRCLIB 网络响应。
+    /// </summary>
+    internal LyricsService(AppSettings settings, LrcLibClient lrcLibClient)
     {
         _netEaseSettings = settings.NetEase;
-        _lrcLibClient = new LrcLibClient(settings.Lyrics.UserAgent);
+        _lrcLibClient = lrcLibClient;
         _localProvider = new LocalLyricsProvider(settings);
 
         var sources = new List<string> { "LRCLIB" };
@@ -84,6 +94,60 @@ public sealed class LyricsService : ILyricsService
     }
 
     public IReadOnlyList<string> AvailableSources => _availableSources;
+
+    public async Task<LyricsResult?> FetchCandidateAsync(
+        TrackInfo track,
+        CandidateOrigin origin,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        switch (origin)
+        {
+            case CandidateOrigin.Local local:
+                {
+                    if (!File.Exists(local.FilePath)) return null;
+                    var content = await File.ReadAllTextAsync(local.FilePath, cancellationToken)
+                        .ConfigureAwait(false);
+                    return new LyricsResult
+                    {
+                        Source = "Local",
+                        SyncedLyrics = content,
+                        PlainLyrics = content,
+                    };
+                }
+            case CandidateOrigin.Lrclib:
+                {
+                    var durationSeconds = track.DurationMs > 0
+                        ? track.DurationMs / 1000.0
+                        : (double?)null;
+                    var resp = await _lrcLibClient
+                        .GetAsync(track.Name, track.Artist, track.Album, durationSeconds, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (resp is null) return null;
+
+                    var synced = Normalize(resp.SyncedLyrics);
+                    var plain = Normalize(resp.PlainLyrics);
+                    if (!string.IsNullOrWhiteSpace(synced))
+                    {
+                        return new LyricsResult
+                        {
+                            Source = "LRCLIB",
+                            SyncedLyrics = synced,
+                            PlainLyrics = plain,
+                        };
+                    }
+                    return !string.IsNullOrWhiteSpace(plain)
+                        ? new LyricsResult { Source = "LRCLIB", PlainLyrics = plain }
+                        : null;
+                }
+            case CandidateOrigin.Netease:
+                // 本期 Netease 不作为覆盖项的常见来源：覆盖项恢复路径不实现。
+                return null;
+            default:
+                return null;
+        }
+    }
 
     private async Task<LyricsResult?> FetchFromLrcLibAsync(TrackInfo track, CancellationToken cancellationToken)
     {

@@ -48,6 +48,8 @@ public class PlaybackCoordinatorActiveSourceTests
             => Task.FromResult<LyricsResult?>(null);
         public Task<LyricsResult?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
             => Task.FromResult<LyricsResult?>(null);
+        public Task<LyricsResult?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
+            => Task.FromResult<LyricsResult?>(null);
     }
 
     private static PlaybackCoordinator BuildCoordinator(PlaybackSourceRegistry registry, string initialId)

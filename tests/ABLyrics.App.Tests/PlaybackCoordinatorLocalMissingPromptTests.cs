@@ -47,6 +47,9 @@ public class PlaybackCoordinatorLocalMissingPromptTests
             LastTrack = track;
             return Task.FromResult(Responses.TryGetValue($"{source}:{track.Id}", out var v) ? v : null);
         }
+
+        public Task<LyricsResult?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
+            => Task.FromResult<LyricsResult?>(null);
     }
 
     private static TrackInfo Track(string id) => new()
