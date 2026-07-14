@@ -34,6 +34,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
     private string? _loadedTrackId;
     private int _trackDurationMs;
+    private string _trackAlbum = string.Empty;
     private long _lastProgressMs;
     private DateTimeOffset _lastSampleAt = DateTimeOffset.UtcNow;
     private bool _isPlaying;
@@ -89,6 +90,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         get => _artistName;
         private set => SetField(ref _artistName, value);
     }
+
+    public string TrackAlbum => _trackAlbum;
 
     public string CurrentLine
     {
@@ -298,6 +301,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
             Id = _loadedTrackId,
             Name = TrackTitle,
             Artist = ArtistName,
+            Album = _trackAlbum,
             DurationMs = _trackDurationMs,
         };
 
@@ -394,6 +398,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     {
         _loadedTrackId = track.Id;
         _trackDurationMs = track.DurationMs;
+        _trackAlbum = track.Album;
         _trackInfoLayout.ResetForNewTrack();
         ShouldCenterTrackInfo = true;
         ClearLyricLines();
@@ -491,6 +496,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     {
         _loadedTrackId = track.Id;
         _trackDurationMs = track.DurationMs;
+        _trackAlbum = track.Album;
         TrackTitle = track.Name;
         ArtistName = track.Artist;
     }

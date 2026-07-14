@@ -135,6 +135,7 @@ public partial class AppBarWindow : Window
             Id = _coordinator.GetCurrentTrackId() ?? string.Empty,
             Name = _coordinator.TrackTitle,
             Artist = _coordinator.ArtistName,
+            Album = _coordinator.TrackAlbum,
         };
     }
 

@@ -32,16 +32,19 @@ public class PlaybackCoordinatorLocalMissingPromptTests
         public Dictionary<string, LyricsResult?> Responses { get; } = new();
         public IReadOnlyList<string> AvailableSources => new[] { "LRCLIB", "Local" };
         public int CallCount { get; private set; }
+        public TrackInfo? LastTrack { get; private set; }
 
         public Task<LyricsResult?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
         {
             CallCount++;
+            LastTrack = track;
             return Task.FromResult<LyricsResult?>(null);
         }
 
         public Task<LyricsResult?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
         {
             CallCount++;
+            LastTrack = track;
             return Task.FromResult(Responses.TryGetValue($"{source}:{track.Id}", out var v) ? v : null);
         }
     }
@@ -51,6 +54,15 @@ public class PlaybackCoordinatorLocalMissingPromptTests
         Id = id,
         Name = "Song",
         Artist = "Artist",
+        DurationMs = 1000,
+    };
+
+    private static TrackInfo TrackWithAlbum(string id, string album) => new()
+    {
+        Id = id,
+        Name = "Song",
+        Artist = "Artist",
+        Album = album,
         DurationMs = 1000,
     };
 
@@ -246,5 +258,48 @@ public class PlaybackCoordinatorLocalMissingPromptTests
         await coordinator.ReloadCurrentTrackAsync();
 
         Assert.Equal(2, raised);
+    }
+
+    [Fact]
+    public async Task ReloadCurrentTrackAsync_PassesAlbumThroughToLyricsService()
+    {
+        var lyrics = new FakeLyricsService();
+        var registry = new PlaybackSourceRegistry();
+        var behavior = NewBehavior(true);
+        var coordinator = Build(lyrics, registry, behavior);
+
+        await coordinator.SetSourceAsync("Local");
+        coordinator.InjectLoadedTrack(TrackWithAlbum("t1", "七里香"));
+        await coordinator.ReloadCurrentTrackAsync();
+
+        Assert.NotNull(lyrics.LastTrack);
+        Assert.Equal("七里香", lyrics.LastTrack!.Album);
+    }
+
+    [Fact]
+    public void TrackAlbum_ReflectsInjectedTrackAlbum()
+    {
+        // 修复 AppBar "导入歌词文件…" 入口丢失专辑名的回归点：
+        // AppBarWindow.GetCurrentTrack() 需要从 coordinator 读 Album，
+        // 才能让 LocalLyricsProvider.ImportAsync 拿到完整元数据。
+        var lyrics = new FakeLyricsService();
+        var registry = new PlaybackSourceRegistry();
+        var behavior = NewBehavior(true);
+        var coordinator = Build(lyrics, registry, behavior);
+
+        coordinator.InjectLoadedTrack(TrackWithAlbum("t1", "七里香"));
+
+        Assert.Equal("七里香", coordinator.TrackAlbum);
+    }
+
+    [Fact]
+    public void TrackAlbum_DefaultsToEmptyWhenNoTrackLoaded()
+    {
+        var lyrics = new FakeLyricsService();
+        var registry = new PlaybackSourceRegistry();
+        var behavior = NewBehavior(true);
+        var coordinator = Build(lyrics, registry, behavior);
+
+        Assert.Equal(string.Empty, coordinator.TrackAlbum);
     }
 }
