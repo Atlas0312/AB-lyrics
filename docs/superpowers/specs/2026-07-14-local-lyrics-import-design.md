@@ -368,8 +368,8 @@ Path.GetRandomFileName())` 的临时目录，每个测试结束清理）：
 ## 验收清单
 
 1. 切换到 Local 源、本地库未命中当前曲目 → 自动弹一次文件选择框（同一首曲目本 session 内仅一次）。
-2. 选择 `.lrc` 或 `.txt` → 文件被复制到 `%APPDATA%/ABLyrics/lyrics/{Artist} - {Name}.lrc`（覆盖已有）
-   → 当前曲目歌词自动显示。
+2. 选择 `.lrc` 或 `.txt` → 文件被复制到 `%APPDATA%/ABLyrics/lyrics/{Artist} - {Album} - {Name}.lrc`
+   （Album 为空时降级为 `{Artist} - {Name}.lrc`；覆盖已有）→ 当前曲目歌词自动显示。
 3. 用户取消对话框 → 状态保持"暂无歌词"，无副作用。
 4. 同一曲目重复触发（手动刷新、重新进入）→ 不再弹窗；切换到其他曲目后再次未命中则重新弹。
 5. 在 Local 子菜单点击"导入歌词文件…" → 同样行为；当前非 Local 时导入完成自动切到 Local 并显示。
