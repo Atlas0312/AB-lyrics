@@ -465,6 +465,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
     /// <summary>
     /// 用户在候选窗口里点了 [确认]：立即把指定候选喂入主引擎并持久化为覆盖项。
+    /// 同步触发一次 <see cref="UpdateLyricFrame"/>，让 AppBar/Overlay 立刻拿到新歌词行
+    /// （否则要等下次 Poll 周期——若用户暂停中，可能要等很久）。
     /// </summary>
     public async Task ApplyCandidateAsync(LyricsCandidate candidate)
     {
@@ -483,6 +485,10 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         ApplyCandidateToEngine(candidate);
         LyricsSource = candidate.Source;
         StatusText = string.Empty;
+        LoadingFlash?.Invoke();
+        // 立刻刷一帧，确保即使在暂停状态下 CurrentLine 等也立刻反映新候选；
+        // PollAsync/TickInterpolation 下次也会再刷一次，重复但不会出错。
+        UpdateLyricFrame(GetInterpolatedProgressMs());
         await Task.CompletedTask;
     }
 

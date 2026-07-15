@@ -3,8 +3,10 @@
                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:views="clr-namespace:ABLyrics.App.Views"
+                 xmlns:models="clr-namespace:ABLyrics.App.Models"
                  Title="选择歌词版本"
                  Height="600" Width="900"
+                 MinHeight="420" MinWidth="640"
                  WindowStartupLocation="CenterOwner">
     <Grid>
         <Grid.RowDefinitions>
@@ -17,21 +19,24 @@
         <DockPanel Grid.Row="0" Margin="12,8">
             <TextBlock Text="库:" VerticalAlignment="Center" Margin="0,0,8,0"/>
             <ComboBox x:Name="LibraryCombo" Width="140" SelectionChanged="OnLibrarySelectionChanged"/>
-            <TextBlock x:Name="TrackInfoText" Margin="16,0,0,0" VerticalAlignment="Center" Opacity="0.7"/>
+            <TextBlock x:Name="TrackInfoText" Margin="16,0,0,0" VerticalAlignment="Center" Opacity="0.7"
+                       TextTrimming="CharacterEllipsis"/>
         </DockPanel>
 
         <!-- Row 1: 主体两列 -->
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="320"/>
+                <!-- 最小 240、最大 480、可用空间不够时收缩；右侧对比区始终拿 '*' -->
+                <ColumnDefinition Width="360" MinWidth="240" MaxWidth="480"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 左侧：候选列表 -->
+            <!-- 左侧：候选列表（多选，按住 Ctrl/Shift 选多项） -->
             <ListBox x:Name="CandidatesList" Grid.Column="0"
-                     SelectionMode="Single"
-                     SelectionChanged="OnCandidateSelected"
+                     SelectionMode="Extended"
+                     SelectionChanged="OnCandidateSelectionChanged"
                      HorizontalContentAlignment="Stretch"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      Margin="8,0,4,8">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
@@ -57,23 +62,39 @@
                                 </Ellipse.Style>
                             </Ellipse>
                             <StackPanel Grid.Column="1">
-                                <TextBlock Text="{Binding DisplayText}" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding OriginDescription}" Opacity="0.6" FontSize="11"/>
-                                <TextBlock Text="当前覆盖" Foreground="#FF9800" FontSize="11"
-                                           Visibility="{Binding IsOverrideVisibility}"/>
+                                <TextBlock Text="{Binding DisplayText}" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayText}"/>
+                                <TextBlock Text="{Binding OriginDescription}" Opacity="0.6" FontSize="11"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding OriginDescription}"/>
+                                <DockPanel>
+                                    <TextBlock Text="当前覆盖" Foreground="#FF9800" FontSize="11"
+                                               Visibility="{Binding IsOverrideVisibility}"/>
+                                    <Button Content="✕" Padding="4,0" Margin="6,0,0,0" FontSize="11"
+                                            BorderThickness="0" Background="Transparent"
+                                            Foreground="#FF9800"
+                                            Visibility="{Binding IsOverrideVisibility}"
+                                            ToolTip="清除当前覆盖项"
+                                            Click="OnClearOverrideClick"
+                                            Tag="{Binding}"
+                                            HorizontalAlignment="Left"/>
+                                </DockPanel>
                             </StackPanel>
-                            <RadioButton Grid.Column="2" IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                         VerticalAlignment="Center" GroupName="CandidateGroup"/>
+                            <CheckBox Grid.Column="2"
+                                      IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                      IsHitTestVisible="False"
+                                      Focusable="False"
+                                      VerticalAlignment="Center"
+                                      Margin="4,0,0,0"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
 
-            <!-- 右侧：对比区 -->
+            <!-- 右侧：对比区（1-3 列并排） -->
             <Border Grid.Column="1" Margin="4,0,8,8"
                     BorderBrush="Gray" BorderThickness="1">
                 <Grid>
-                    <TextBlock x:Name="EmptyCompareText" Text="勾选候选以对比"
+                    <TextBlock x:Name="EmptyCompareText" Text="勾选候选以对比（最多 3 个）"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                Opacity="0.5" FontSize="14"/>
                     <ItemsControl x:Name="CompareColumns" Visibility="Collapsed">
@@ -83,8 +104,8 @@
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <views:CandidateColumnView/>
+                            <DataTemplate DataType="{x:Type models:LyricsCandidate}">
+                                <views:CandidateColumnView Loaded="OnCompareColumnLoaded"/>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -92,9 +113,12 @@
             </Border>
         </Grid>
 
-        <!-- Row 2: 底部：状态文本 + 按钮 -->
+        <!-- Row 2: 底部：状态文本 + 候选计数 + 按钮 -->
         <DockPanel Grid.Row="2" Margin="12,8">
-            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Opacity="0.7"/>
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Opacity="0.7"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="SelectionSummaryText" VerticalAlignment="Center"
+                       Margin="12,0,0,0" Opacity="0.7"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
                 <Button Content="刷新" Padding="12,6" Margin="0,0,8,0" Click="OnRefreshClick"/>
                 <Button x:Name="ConfirmButton" Content="确认" Padding="12,6" Margin="0,0,8,0"

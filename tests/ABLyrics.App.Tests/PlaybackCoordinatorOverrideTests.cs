@@ -291,4 +291,76 @@ public class PlaybackCoordinatorOverrideTests
 
         Assert.NotEmpty(received);
     }
+
+    /// <summary>
+    /// 回归 Bug 3：用户在候选窗口 [确认] 后，主引擎必须立刻持有候选歌词内容，
+    /// 关键点：ApplyCandidateAsync 同步触发一次 UpdateLyricFrame——主引擎应立刻反映候选。
+    /// </summary>
+    [Fact]
+    public async Task ApplyCandidateAsync_LoadedCandidate_DrivesEngineGetFrame()
+    {
+        var track = Track();
+        var lyrics = new FakeLyricsService();
+        var coordinator = Build(lyrics);
+
+        // 让 coordinator 知道当前曲目（trackFields 依赖 _loadedTrackId/_trackTitle 等）
+        await InvokeLoadTrackAsync(coordinator, track);
+
+        // 取主引擎句柄
+        var engineField = typeof(PlaybackCoordinator).GetField(
+            "_syncEngine",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(engineField);
+        var engine = (LyricsSyncEngine)engineField!.GetValue(coordinator)!;
+
+        // 构造一个候选：synced lyrics 在 1.5s 处一句
+        var candidate = new LyricsCandidate
+        {
+            Source = "Local",
+            Label = "测试覆盖项",
+            SyncedLyrics = "[00:01.50]确认后立刻显示\n",
+            PlainLyrics = "确认后立刻显示",
+            DurationMs = track.DurationMs,
+            Origin = new CandidateOrigin.Local(CreateTempLrcFile()),
+        };
+
+        // 模拟播放进度已经走到 1.5s 之后，确保 UpdateLyricFrame 能命中候选行
+        // 设置 _isPlaying=true + _lastProgressMs=1600（验证触发 UpdateLyricFrame 后立即刷出 CurrentLine）
+        var playingField = typeof(PlaybackCoordinator).GetField(
+            "_isPlaying", BindingFlags.NonPublic | BindingFlags.Instance);
+        var lastProgressField = typeof(PlaybackCoordinator).GetField(
+            "_lastProgressMs", BindingFlags.NonPublic | BindingFlags.Instance);
+        var lastSampleField = typeof(PlaybackCoordinator).GetField(
+            "_lastSampleAt", BindingFlags.NonPublic | BindingFlags.Instance);
+        playingField!.SetValue(coordinator, true);
+        // _syncOffsetMs=150（默认）会扣掉；将 _lastProgressMs 设为 1800 保证插值后仍 >= 1500（候选首句时间）
+        lastProgressField!.SetValue(coordinator, 1800L);
+        lastSampleField!.SetValue(coordinator, DateTimeOffset.UtcNow);
+
+        // 关键断言 #1：订阅了 ProgressMsChanged 后调 ApplyCandidate，事件应立刻触发
+        var received = new List<long>();
+        coordinator.ProgressMsChanged += ms => received.Add(ms);
+
+        await coordinator.ApplyCandidateAsync(candidate);
+
+        // Bug 3 核心：确认后主窗口字段立刻刷新，不需等下一次 Poll
+        Assert.Equal("Local", coordinator.LyricsSource);
+        Assert.True(coordinator.IsLyricsActive,
+            "ApplyCandidateAsync 后，IsLyricsActive 应立刻为 true（progressMs 命中候选行）");
+        Assert.Equal("确认后立刻显示", coordinator.CurrentLine);
+        Assert.Equal(string.Empty, coordinator.StatusText);
+
+        // 关键断言 #2：主引擎真实持有候选歌词内容
+        var frameBefore = engine.GetFrame(0);
+        var frameAt = engine.GetFrame(1600);
+        Assert.True(frameAt.IsActive && frameAt.IsSynced,
+            "ApplyCandidateAsync 后，主引擎 GetFrame(1600) 应返回已同步且 active 的帧");
+        Assert.Equal("确认后立刻显示", frameAt.CurrentLine);
+        // 0ms 早于 1500ms，引擎返回空帧是预期
+        Assert.False(frameBefore.IsActive || !string.IsNullOrEmpty(frameBefore.CurrentLine),
+            "未到第一句时间前，主引擎不应过早显示歌词");
+
+        // 关键断言 #3：ProgressMsChanged 在 ApplyCandidate 期间被主动触发
+        Assert.NotEmpty(received);
+    }
 }
