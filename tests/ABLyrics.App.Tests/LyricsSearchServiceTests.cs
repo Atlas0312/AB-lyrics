@@ -198,6 +198,39 @@ public class LyricsSearchServiceTests : IDisposable
         Assert.Equal("1:05", c.Label);
     }
 
+    /// <summary>
+    /// 回归 Bug 2（用户原话）：picker 选 LRCLIB 候选应用为覆盖项后，AppBar 仍显示繁体。
+    /// 根因是 LyricsSearchService.SearchLrclibAsync 在构造 LyricsCandidate 时没做 t2s。
+    /// 修复：构造 LyricsCandidate 前先 LyricsTextNormalizer.NormalizeAll。
+    /// </summary>
+    [Fact]
+    public async Task SearchAsync_LrclibLibrary_TraditionalChineseLyrics_NormalizedToSimplified()
+    {
+        var handler = new StubHandler();
+        handler.Enqueue(HttpStatusCode.OK, """
+            [
+              { "id": 7, "trackName": "Song", "artistName": "Artist", "albumName": "Album",
+                "duration": 200.0, "syncedLyrics": "[00:01.00]親愛的 記憶 聲音 的時候", "plainLyrics": "親愛的 記憶 聲音 的時候" }
+            ]
+            """);
+        var lrcLib = BuildLrcLibClient(handler);
+        var service = NewServiceWithLocalDir(lrcLib);
+
+        var candidates = await service.SearchAsync(Track(durationMs: 200_000), "LRCLIB", CancellationToken.None);
+
+        var c = Assert.Single(candidates);
+        // 转换器必须把繁体改成简体
+        Assert.Contains("亲爱的", c.SyncedLyrics);
+        Assert.Contains("记忆", c.SyncedLyrics);
+        Assert.Contains("声音", c.SyncedLyrics);
+        Assert.Contains("时候", c.SyncedLyrics);
+        // PlainLyrics 也要 t2s
+        Assert.Contains("亲爱的", c.PlainLyrics);
+        Assert.Contains("记忆", c.PlainLyrics);
+        // 时间标签必须保留
+        Assert.StartsWith("[00:01.00]", c.SyncedLyrics);
+    }
+
     // ---------- SearchAsync / Netease / Unknown ----------
 
     [Fact]

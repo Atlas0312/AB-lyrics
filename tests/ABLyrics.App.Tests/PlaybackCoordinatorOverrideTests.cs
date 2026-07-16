@@ -181,8 +181,10 @@ public class PlaybackCoordinatorOverrideTests
     }
 
     [Fact]
-    public async Task LoadTrackAsync_OverrideStaleFile_RemovesOverrideAndFallsBack()
+    public async Task LoadTrackAsync_OverrideStaleFile_KeepsOverrideAndDoesNotFallBack()
     {
+        // 回归 Bug 1：覆盖项源此次加载失败时，必须保留 override，不回退到 LRCLIB，
+        // 否则一次性的网络/文件抖动会把用户的覆盖项悄悄丢掉。
         var key = TrackKey.From("周杰伦", "七里香", "晴天");
         var store = new LyricsOverrideStore();
         var stalePath = Path.Combine(Path.GetTempPath(), "ABLyricsTest-deleted-" + Guid.NewGuid().ToString("N") + ".lrc");
@@ -194,10 +196,13 @@ public class PlaybackCoordinatorOverrideTests
 
         await InvokeLoadTrackAsync(coordinator, Track());
 
-        // 覆盖项被移除
-        Assert.False(store.Load().ContainsKey(key));
-        // 走 LRCLIB fallback
-        Assert.True(lyrics.FetchLyricsCallCount >= 1);
+        // 覆盖项必须保留
+        Assert.True(store.Load().ContainsKey(key),
+            "Bug 1 回归：覆盖项源加载失败时不应被自动删除");
+        // 不走 LRCLIB fallback
+        Assert.Equal(0, lyrics.FetchLyricsCallCount);
+        // 状态栏应给出提示，但不显示 LRCLIB 加载文案
+        Assert.Contains("覆盖项", coordinator.StatusText);
     }
 
     [Fact]
@@ -362,5 +367,166 @@ public class PlaybackCoordinatorOverrideTests
 
         // 关键断言 #3：ProgressMsChanged 在 ApplyCandidate 期间被主动触发
         Assert.NotEmpty(received);
+    }
+
+    /// <summary>
+    /// 回归 Bug 1 的用户报告场景：
+    ///   1) 为歌曲 A 选定一个 Local override
+    ///   2) 切到歌曲 B（无 override）
+    ///   3) 切回歌曲 A —— 必须仍使用 override，绝不能回退到 LRCLIB
+    /// </summary>
+    [Fact]
+    public async Task LoadTrackAsync_SwitchAwayAndBack_KeepsOverrideForOriginalTrack()
+    {
+        var lrcPath = CreateTempLrcFile();
+        try
+        {
+            var key = TrackKey.From("周杰伦", "七里香", "晴天");
+            var store = new LyricsOverrideStore();
+            store.Save(key, new CandidateOrigin.Local(lrcPath));
+
+            var lyrics = new FakeLyricsService
+            {
+                CandidateResponses =
+                {
+                    [new CandidateOrigin.Local(lrcPath)] = new LyricsResult
+                    {
+                        Source = "Local",
+                        SyncedLyrics = "[00:01.00]覆盖项内容\n",
+                        PlainLyrics = "覆盖项内容",
+                    },
+                },
+            };
+            var coordinator = Build(lyrics, store);
+
+            // 1) 先加载 A
+            await InvokeLoadTrackAsync(coordinator, Track());
+            Assert.Equal("Local", coordinator.LyricsSource);
+
+            // 2) 切到 B（无 override）—— 应走 LRCLIB fallback
+            var trackB = Track(id: "tB", name: "B", artist: "B-Artist", album: "B-Album");
+            await InvokeLoadTrackAsync(coordinator, trackB);
+            Assert.Equal(1, lyrics.FetchLyricsCallCount);
+
+            // 3) 切回 A —— 必须仍用 Local override，不能再触发 LRCLIB
+            await InvokeLoadTrackAsync(coordinator, Track());
+            Assert.Equal("Local", coordinator.LyricsSource);
+            Assert.Equal(1, lyrics.FetchLyricsCallCount);
+        }
+        finally
+        {
+            if (File.Exists(lrcPath)) File.Delete(lrcPath);
+        }
+    }
+
+    /// <summary>
+    /// 回归 Bug 3：切歌瞬间必须清空主引擎，防止 await 期间 PollAsync 用旧引擎数据
+    /// 回放旧歌词。
+    /// </summary>
+    [Fact]
+    public async Task LoadTrackAsync_SwitchingTrack_ClearsSyncEngineSynchronously()
+    {
+        var lrcPath = CreateTempLrcFile();
+        try
+        {
+            // 先准备一首带 synced lyrics 的歌曲 + override
+            var key = TrackKey.From("周杰伦", "七里香", "晴天");
+            var store = new LyricsOverrideStore();
+            store.Save(key, new CandidateOrigin.Local(lrcPath));
+
+            var lyrics = new FakeLyricsService
+            {
+                CandidateResponses =
+                {
+                    [new CandidateOrigin.Local(lrcPath)] = new LyricsResult
+                    {
+                        Source = "Local",
+                        SyncedLyrics = "[00:01.00]旧歌歌词\n",
+                        PlainLyrics = "旧歌歌词",
+                    },
+                },
+            };
+            var coordinator = Build(lyrics, store);
+
+            // 加载旧歌：引擎应持有旧歌词
+            await InvokeLoadTrackAsync(coordinator, Track());
+            var engineField = typeof(PlaybackCoordinator).GetField(
+                "_syncEngine",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(engineField);
+            var engine = (LyricsSyncEngine)engineField!.GetValue(coordinator)!;
+            var frameBefore = engine.GetFrame(1500);
+            Assert.True(frameBefore.IsActive);
+            Assert.Equal("旧歌歌词", frameBefore.CurrentLine);
+
+            // 切到一首完全不同的歌（无 override，无 synced fallback ——返回 null）
+            // 关键：在调用结束后（await 完），引擎必须已被清空。
+            // 注意：当前测试用反射同步执行整个 LoadTrackAsync，没有"切歌中间态"，
+            // 因此我们用强一致的同步前置行为（_syncEngine.Load(null) 在 await 之前）
+            // 来覆盖语义。验证方法：再次进入 LoadTrackAsync 后状态字段全部为空。
+            var trackB = Track(id: "tB", name: "B", artist: "B", album: "B");
+            // 把新歌的 LRCLIB 也返回 null，模拟纯加载失败场景
+            lyrics.CandidateResponses.Clear();
+            await InvokeLoadTrackAsync(coordinator, trackB);
+
+            Assert.Equal("B", coordinator.TrackTitle);
+            Assert.False(coordinator.IsLyricsActive);
+            Assert.Equal(string.Empty, coordinator.CurrentLine);
+            Assert.Equal(string.Empty, coordinator.PreviousLine);
+
+            // 引擎内部状态：旧歌词已清空
+            var frameAfter = engine.GetFrame(1500);
+            Assert.False(frameAfter.IsActive || !string.IsNullOrEmpty(frameAfter.CurrentLine),
+                "切歌后引擎必须不再返回旧歌 CurrentLine");
+        }
+        finally
+        {
+            if (File.Exists(lrcPath)) File.Delete(lrcPath);
+        }
+    }
+
+    /// <summary>
+    /// 回归 Bug 2 兜底：即使调用方传入的 candidate 含繁体（未做 t2s），
+    /// ApplyCandidateAsync 在喂入主引擎前必须 NormalizeAll 一次，
+    /// 避免 AppBar 显示与 picker 显示、跨来源显示不一致。
+    /// </summary>
+    [Fact]
+    public async Task ApplyCandidateAsync_TraditionalChineseCandidate_NormalizesBeforeFeedingEngine()
+    {
+        var track = Track();
+        var lyrics = new FakeLyricsService();
+        var coordinator = Build(lyrics);
+
+        await InvokeLoadTrackAsync(coordinator, track);
+
+        // 让播放进度走到 1500ms 后，确保主引擎 GetFrame 命中候选首句
+        var playingField = typeof(PlaybackCoordinator).GetField(
+            "_isPlaying", BindingFlags.NonPublic | BindingFlags.Instance);
+        var lastProgressField = typeof(PlaybackCoordinator).GetField(
+            "_lastProgressMs", BindingFlags.NonPublic | BindingFlags.Instance);
+        var lastSampleField = typeof(PlaybackCoordinator).GetField(
+            "_lastSampleAt", BindingFlags.NonPublic | BindingFlags.Instance);
+        playingField!.SetValue(coordinator, true);
+        lastProgressField!.SetValue(coordinator, 1800L);
+        lastSampleField!.SetValue(coordinator, DateTimeOffset.UtcNow);
+
+        // 故意构造一个含繁体的 candidate —— 模拟"调用方忘做 t2s"或"覆盖项恢复路径"。
+        var candidate = new LyricsCandidate
+        {
+            Source = "LRCLIB",
+            Label = "繁体覆盖项",
+            SyncedLyrics = "[00:01.50]親愛的 記憶 聲音 的時候",
+            PlainLyrics = "親愛的 記憶 聲音 的時候",
+            DurationMs = track.DurationMs,
+            Origin = new CandidateOrigin.Lrclib(1),
+        };
+
+        await coordinator.ApplyCandidateAsync(candidate);
+
+        // 主窗口字段必须是简体
+        Assert.Equal("LRCLIB", coordinator.LyricsSource);
+        Assert.True(coordinator.IsLyricsActive);
+        Assert.Contains("亲爱的", coordinator.CurrentLine);
+        Assert.DoesNotContain("親愛", coordinator.CurrentLine);
     }
 }

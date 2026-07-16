@@ -1,6 +1,5 @@
 using System.IO;
 using Lyricify.Lyrics.Providers.Web.Netease;
-using OpenccNetLib;
 using ABLyrics.App.Configuration;
 using ABLyrics.App.Models;
 
@@ -8,7 +7,6 @@ namespace ABLyrics.App.Services.Lyrics;
 
 public sealed class LyricsService : ILyricsService
 {
-    private static readonly Opencc _chineseConverter = new("t2s");
     private readonly NetEaseSettings _netEaseSettings;
     private readonly LrcLibClient _lrcLibClient;
     private readonly Api _neteaseApi = new();
@@ -202,9 +200,5 @@ public sealed class LyricsService : ILyricsService
         };
     }
 
-    private static string? Normalize(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        return _chineseConverter.Convert(value.Trim());
-    }
+    private static string? Normalize(string? value) => LyricsTextNormalizer.Normalize(value);
 }

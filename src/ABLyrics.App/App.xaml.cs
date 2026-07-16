@@ -307,6 +307,7 @@ public partial class App : System.Windows.Application
 
     /// <summary>
     /// 创建或激活选版本窗口。单例：关闭按钮 = Hide，不释放。
+    /// 每次开窗都把当前在播的曲目重新绑定到窗口，避免切歌后仍显示旧曲目。
     /// </summary>
     public void ShowCandidatePicker()
     {
@@ -330,6 +331,11 @@ public partial class App : System.Windows.Application
         {
             _candidatePicker = new LyricsCandidatePickerWindow(
                 Coordinator, _searchService, _overrideStore, track);
+        }
+        else
+        {
+            // 单例复用：必须把最新 track 同步到窗口，否则会一直显示首次打开时的歌。
+            _candidatePicker.RebindForTrack(track);
         }
 
         if (_candidatePicker.WindowState == WindowState.Minimized)

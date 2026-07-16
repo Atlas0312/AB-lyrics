@@ -366,39 +366,39 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(false);
-            if (playback is null)
-            {
-                var wasPlaying = _isPlaying;
-                _isPlaying = false;
-                if (wasPlaying != _isPlaying)
-                {
-                    IsPlayingChanged?.Invoke(_isPlaying);
-                }
-                ClearLyrics();
-                TrackTitle = string.Empty;
-                ArtistName = string.Empty;
-                StatusText = "未在播放";
-                return;
-            }
-
-            TrackTitle = playback.Track.Name;
-            ArtistName = playback.Track.Artist;
-            var wasPlaying2 = _isPlaying;
-            _isPlaying = playback.IsPlaying;
-            if (wasPlaying2 != _isPlaying)
+var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(false);
+        if (playback is null)
+        {
+            var wasPlaying = _isPlaying;
+            _isPlaying = false;
+            if (wasPlaying != _isPlaying)
             {
                 IsPlayingChanged?.Invoke(_isPlaying);
             }
-            _lastProgressMs = playback.ProgressMs;
-            _lastSampleAt = DateTimeOffset.UtcNow;
+            ClearLyrics();
+            TrackTitle = string.Empty;
+            ArtistName = string.Empty;
+            StatusText = "未在播放";
+            return;
+        }
 
-            if (_loadedTrackId != playback.Track.Id)
-            {
-                await LoadTrackAsync(playback.Track).ConfigureAwait(false);
-            }
+        TrackTitle = playback.Track.Name;
+        ArtistName = playback.Track.Artist;
+        var wasPlaying2 = _isPlaying;
+        _isPlaying = playback.IsPlaying;
+        if (wasPlaying2 != _isPlaying)
+        {
+            IsPlayingChanged?.Invoke(_isPlaying);
+        }
+        _lastProgressMs = playback.ProgressMs;
+        _lastSampleAt = DateTimeOffset.UtcNow;
 
-            UpdateLyricFrame(GetInterpolatedProgressMs());
+        if (_loadedTrackId != playback.Track.Id)
+        {
+            await LoadTrackAsync(playback.Track).ConfigureAwait(false);
+        }
+
+        UpdateLyricFrame(GetInterpolatedProgressMs());
         }
         catch (Exception ex)
         {
@@ -416,6 +416,9 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         _trackInfoLayout.ResetForNewTrack();
         ShouldCenterTrackInfo = true;
         ClearLyricLines();
+        // 立刻同步清空引擎，防止 await 网络/文件 IO 期间 PollAsync 用旧引擎数据
+        // 重新喂出上一首歌的 CurrentLine/PreviousLine（Bug 3）。
+        _syncEngine.Load(null);
 
         var key = TrackKey.From(track);
         if (_overrides.TryGetValue(key, out var persistedOrigin))
@@ -429,9 +432,12 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
                 StatusText = string.Empty;
                 return;
             }
-            // 文件丢失：移除 override 并回退
-            _overrideStore.Remove(key);
-            _overrides.Remove(key);
+            // 覆盖项源此次加载失败：保留 override，不回退到 LRCLIB。
+            // 覆盖项只能由 picker 上的「✕」按钮显式移除，避免一次性失败把它悄悄丢掉。
+            _overrideCandidate = null;
+            LyricsSource = string.Empty;
+            StatusText = "覆盖项源暂不可用，请稍候重试";
+            return;
         }
 
         StatusText = "正在尝试 LRCLIB…";
@@ -450,8 +456,12 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
             return Math.Max(0, _lastProgressMs - _syncOffsetMs);
         }
 
-        var elapsed = DateTimeOffset.UtcNow - _lastSampleAt;
-        var clamped = Math.Min((long)elapsed.TotalMilliseconds, PollIntervalMs);
+        var elapsed = (long)(DateTimeOffset.UtcNow - _lastSampleAt).TotalMilliseconds;
+        // clamp 上限设为 4 个 Poll 周期：HTTP 抖动常使 PollAsync 1~3s 才回来一次，
+        // 旧值 PollIntervalMs (800ms) 会让进度被"压"住从而歌词落后真实播放 1+ 秒。
+        // 超过该阈值时放弃插值、用上次 Poll 的进度，宁可歌词"停一下"也不要持续滞后。
+        const int InterpolationClampMs = PollIntervalMs * 4;
+        var clamped = Math.Min(elapsed, InterpolationClampMs);
         return _lastProgressMs + clamped - _syncOffsetMs;
     }
 
@@ -481,9 +491,22 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         var key = TrackKey.From(track);
         _overrides[key] = candidate.Origin;
         _overrideStore.Save(key, candidate.Origin);
-        _overrideCandidate = candidate;
-        ApplyCandidateToEngine(candidate);
-        LyricsSource = candidate.Source;
+        // 兜底：无论 candidate 从哪条路径（picker 搜索、覆盖项恢复…）来，
+        // 喂入主引擎前都确保 t2s 繁→简 已应用，与 AppBar 主显示一致。
+        var (synced, plain) = LyricsTextNormalizer.NormalizeAll(candidate.SyncedLyrics, candidate.PlainLyrics);
+        var normalized = new LyricsCandidate
+        {
+            Source = candidate.Source,
+            Label = candidate.Label,
+            SyncedLyrics = synced,
+            PlainLyrics = plain,
+            DurationMs = candidate.DurationMs,
+            Origin = candidate.Origin,
+            IsAvailable = candidate.IsAvailable,
+        };
+        _overrideCandidate = normalized;
+        ApplyCandidateToEngine(normalized);
+        LyricsSource = normalized.Source;
         StatusText = string.Empty;
         LoadingFlash?.Invoke();
         // 立刻刷一帧，确保即使在暂停状态下 CurrentLine 等也立刻反映新候选；

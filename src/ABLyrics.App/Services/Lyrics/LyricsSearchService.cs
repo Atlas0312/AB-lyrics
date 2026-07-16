@@ -80,12 +80,13 @@ internal sealed class LyricsSearchService : ILyricsSearchService
         var result = new List<LyricsCandidate>(hits.Count);
         foreach (var hit in hits.OrderBy(h => Math.Abs(h.DurationMs - track.DurationMs)))
         {
+            var (synced, plain) = LyricsTextNormalizer.NormalizeAll(hit.SyncedLyrics, hit.PlainLyrics);
             result.Add(new LyricsCandidate
             {
                 Source = "LRCLIB",
                 Label = BuildLrclibLabel(hit),
-                SyncedLyrics = hit.SyncedLyrics,
-                PlainLyrics = hit.PlainLyrics,
+                SyncedLyrics = synced,
+                PlainLyrics = plain,
                 DurationMs = hit.DurationMs,
                 Origin = new CandidateOrigin.Lrclib(hit.Id),
             });
@@ -120,7 +121,8 @@ internal sealed class LyricsSearchService : ILyricsSearchService
             var best = songs.OrderBy(s => Math.Abs(s.Duration - trackDurationMs)).First();
 
             var lyric = await api.GetLyric(best.Id).ConfigureAwait(false);
-            var synced = lyric?.Lrc?.Lyric;
+            var syncedRaw = lyric?.Lrc?.Lyric;
+            var (synced, _) = LyricsTextNormalizer.NormalizeAll(syncedRaw, syncedRaw);
 
             // 字符串 Id 转 long 用于 CandidateOrigin.Netease；解析失败时回退 0，
             // 不应阻塞候选展示。

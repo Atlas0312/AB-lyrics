@@ -31,16 +31,38 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- 左侧：候选列表（多选，按住 Ctrl/Shift 选多项） -->
+            <!-- 左侧：候选列表（点击即勾选/取消，多选用） -->
             <ListBox x:Name="CandidatesList" Grid.Column="0"
-                     SelectionMode="Extended"
+                     SelectionMode="Multiple"
                      SelectionChanged="OnCandidateSelectionChanged"
                      HorizontalContentAlignment="Stretch"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      Margin="8,0,4,8">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="0,2"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="BorderThickness" Value="0"/>
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#332196F3"/>
+                                <Setter Property="BorderBrush" Value="#2196F3"/>
+                                <Setter Property="BorderThickness" Value="3,0,0,0"/>
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsSelected" Value="False"/>
+                                </MultiTrigger.Conditions>
+                                <Setter Property="Background" Value="#11808080"/>
+                            </MultiTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Grid Margin="0,4">
+                        <Grid Margin="8,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
@@ -94,7 +116,7 @@
             <Border Grid.Column="1" Margin="4,0,8,8"
                     BorderBrush="Gray" BorderThickness="1">
                 <Grid>
-                    <TextBlock x:Name="EmptyCompareText" Text="勾选候选以对比（最多 3 个）"
+                    <TextBlock x:Name="EmptyCompareText" Text="点击左侧候选以加入对比（最多 3 个）"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                Opacity="0.5" FontSize="14"/>
                     <ItemsControl x:Name="CompareColumns" Visibility="Collapsed">
@@ -105,7 +127,8 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type models:LyricsCandidate}">
-                                <views:CandidateColumnView Loaded="OnCompareColumnLoaded"/>
+                                <views:CandidateColumnView Loaded="OnCompareColumnLoaded"
+                                                           Selected="OnCompareColumnSelected"/>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -121,8 +144,9 @@
                        Margin="12,0,0,0" Opacity="0.7"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
                 <Button Content="刷新" Padding="12,6" Margin="0,0,8,0" Click="OnRefreshClick"/>
-                <Button x:Name="ConfirmButton" Content="确认" Padding="12,6" Margin="0,0,8,0"
-                        IsEnabled="False" Click="OnConfirmClick"/>
+                <Button x:Name="ConfirmButton" Content="应用所选版本" Padding="12,6" Margin="0,0,8,0"
+                        IsEnabled="False" Click="OnConfirmClick"
+                        ToolTip="在右侧对比区点击列即可高亮选择，再点本按钮应用到主窗口"/>
                 <Button Content="关闭" Padding="12,6" Click="OnCloseClick"/>
             </StackPanel>
         </DockPanel>

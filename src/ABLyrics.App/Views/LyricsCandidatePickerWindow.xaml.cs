@@ -44,6 +44,55 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
     }
 
     /// <summary>
+    /// 由 <see cref="App.ShowCandidatePicker"/> 在每次开窗前调用：把当前在播的曲目
+    /// 同步到窗口，避免单例复用导致一直显示首次打开时的歌曲。
+    /// 若 track 变化，会清空候选列表并按当前 LibraryCombo 选项重新搜索。
+    /// </summary>
+    public void RebindForTrack(TrackInfo? track)
+    {
+        // 已加载同名同 Artist+Album 曲目时不做无意义重搜。
+        if (track is not null
+            && _currentTrack is not null
+            && string.Equals(track.Id, _currentTrack.Id, StringComparison.Ordinal)
+            && string.Equals(track.Artist, _currentTrack.Artist, StringComparison.Ordinal)
+            && string.Equals(track.Name, _currentTrack.Name, StringComparison.Ordinal)
+            && string.Equals(track.Album, _currentTrack.Album, StringComparison.Ordinal))
+        {
+            if (!IsVisible)
+            {
+                Show();
+                Activate();
+            }
+            return;
+        }
+
+        _currentTrack = track;
+        _currentOverrideKey = null;
+        _candidates.Clear();
+        CompareColumns.ItemsSource = null;
+        CompareColumns.Visibility = Visibility.Collapsed;
+        EmptyCompareText.Visibility = Visibility.Visible;
+        ConfirmButton.IsEnabled = false;
+        UpdateSelectionSummary();
+
+        if (track is null)
+        {
+            TrackInfoText.Text = "暂无曲目：请先开始播放";
+            StatusText.Text = string.Empty;
+            LibraryCombo.IsEnabled = false;
+            return;
+        }
+
+        TrackInfoText.Text = $"{track.Artist} — {track.Name} ({track.Album})";
+        LibraryCombo.IsEnabled = true;
+        var library = LibraryCombo.SelectedValue as string;
+        if (!string.IsNullOrEmpty(library))
+        {
+            _ = SearchAsync(track, library);
+        }
+    }
+
+    /// <summary>
     /// 候选项视图模型：包装 <see cref="LyricsCandidate"/> + 选中状态 + 当前覆盖项标记。
     /// </summary>
     private sealed class CandidateRow : INotifyPropertyChanged
@@ -92,6 +141,16 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        // 首次 Loaded 时初始化 LibraryCombo；之后由 RebindForTrack 接管切歌重绑。
+        if (LibraryCombo.ItemsSource is null)
+        {
+            LibraryCombo.ItemsSource = _coordinator.AvailableSources;
+            if (LibraryCombo.Items.Count > 0)
+            {
+                LibraryCombo.SelectedIndex = 0;
+            }
+        }
+
         if (_currentTrack is null)
         {
             StatusText.Text = "暂无曲目：请先开始播放";
@@ -101,13 +160,13 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         TrackInfoText.Text = $"{_currentTrack.Artist} — {_currentTrack.Name} ({_currentTrack.Album})";
-        LibraryCombo.ItemsSource = _coordinator.AvailableSources;
-        if (LibraryCombo.Items.Count > 0)
-        {
-            LibraryCombo.SelectedIndex = 0;
-        }
         ConfirmButton.IsEnabled = false;
-        await SearchAsync(_currentTrack, LibraryCombo.SelectedValue as string);
+        // _candidates 非空表示 App 层已经通过 RebindForTrack 触发过搜索，
+        // 避免重复请求。
+        if (_candidates.Count == 0)
+        {
+            await SearchAsync(_currentTrack, LibraryCombo.SelectedValue as string);
+        }
     }
 
     private async Task SearchAsync(TrackInfo track, string? library)
@@ -230,21 +289,14 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
         CompareColumns.Visibility = Visibility.Visible;
         EmptyCompareText.Visibility = Visibility.Collapsed;
 
-        if (selected.Count == 1)
-        {
-            // 单选：[确认] 可用
-            ConfirmButton.IsEnabled = true;
-            StatusText.Text = "已选中 1 个候选，可点 [确认] 应用到主窗口";
-        }
-        else
-        {
-            // 多选：[确认] 暂不可用，提示用户取消勾选其他候选
-            ConfirmButton.IsEnabled = false;
-            var extra = selected.Count > MaxCompareColumns ? selected.Count - MaxCompareColumns : 0;
-            StatusText.Text = extra > 0
-                ? $"对比中：已显示前 {MaxCompareColumns} 个（共 {selected.Count}）；请只保留一个勾选以启用 [确认]"
-                : $"对比中：已选 {selected.Count} 个；请只保留一个勾选以启用 [确认]";
-        }
+        // 重新生成列后高亮态被重置，所以这里总是禁用「应用所选版本」，
+        // 由右侧列的 Selected 事件来启用（详见 OnCompareColumnSelected）。
+        ConfirmButton.IsEnabled = false;
+
+        var extra = selected.Count > MaxCompareColumns ? selected.Count - MaxCompareColumns : 0;
+        StatusText.Text = extra > 0
+            ? $"对比中：已显示前 {MaxCompareColumns} 个（共 {selected.Count}），点击其中一列选作最终版本"
+            : $"对比中：已选 {selected.Count} 个，点击其中一列选作最终版本";
 
         // 触发首帧（用当前进度 ms）
         var progressMs = _coordinator.GetCurrentTrackId() == _currentTrack?.Id
@@ -308,10 +360,61 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void OnConfirmClick(object sender, RoutedEventArgs e)
     {
-        var selected = GetSelectedRows();
-        if (selected.Count != 1 || _currentTrack is null) return;
-        await _coordinator.ApplyCandidateAsync(selected[0].Candidate);
+        if (_currentTrack is null) return;
+        var final = FindSelectedCompareColumn()?.DataContext as LyricsCandidate;
+        if (final is null) return;
+        try
+        {
+            await _coordinator.ApplyCandidateAsync(final);
+        }
+        catch (Exception ex)
+        {
+            DevExceptionReporter.Show(ex, "应用候选失败");
+            return;
+        }
         Hide();
+    }
+
+    /// <summary>
+    /// 右侧对比区某列被点击 → 选作"最终版本"。
+    /// 同步：把其他列的 IsSelected 清掉；启用底部「应用所选版本」按钮。
+    /// </summary>
+    private void OnCompareColumnSelected(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CandidateColumnView clicked) return;
+        if (CompareColumns.Visibility != Visibility.Visible) return;
+
+        foreach (var column in EnumerateCompareColumns())
+        {
+            if (!ReferenceEquals(column, clicked))
+            {
+                column.IsSelected = false;
+            }
+        }
+        clicked.IsSelected = true;
+        ConfirmButton.IsEnabled = true;
+        StatusText.Text = "已选最终版本，点 [应用所选版本] 写入主窗口";
+    }
+
+    private IEnumerable<CandidateColumnView> EnumerateCompareColumns()
+    {
+        for (var i = 0; i < CompareColumns.Items.Count; i++)
+        {
+            if (CompareColumns.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
+            {
+                var column = FindVisualChild<CandidateColumnView>(container);
+                if (column is not null) yield return column;
+            }
+        }
+    }
+
+    private CandidateColumnView? FindSelectedCompareColumn()
+    {
+        foreach (var column in EnumerateCompareColumns())
+        {
+            if (column.IsSelected) return column;
+        }
+        return null;
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e)
