@@ -1,20 +1,21 @@
 namespace ABLyrics.App.Services;
 
 /// <summary>
-/// 控制曲名区域何时居中：首句歌词前居中，短空白保持左对齐，长间奏（≥3s）再居中。
+/// 控制曲名区域何时居中：首句前居中；有歌词左对齐；
+/// 空档时预读下一句非空时长，≥3s（或无下一句）立刻居中，并在本段空档锁定。
 /// </summary>
 internal sealed class TrackInfoLayoutState
 {
     public const int CenterAfterEmptyMs = 3000;
 
     private bool _hasFirstLyricAppeared;
-    private DateTimeOffset? _lyricsEmptySince;
+    private bool _longSilenceLocked;
 
     public bool ShouldCenter { get; private set; } = true;
 
-    public bool Update(bool shouldShowLyrics)
+    public bool Update(bool shouldShowLyrics, long msUntilNextNonEmpty)
     {
-        var center = ComputeShouldCenter(shouldShowLyrics);
+        var center = ComputeShouldCenter(shouldShowLyrics, msUntilNextNonEmpty);
         if (ShouldCenter == center)
         {
             return false;
@@ -27,7 +28,7 @@ internal sealed class TrackInfoLayoutState
     public void ResetForNewTrack()
     {
         _hasFirstLyricAppeared = false;
-        _lyricsEmptySince = null;
+        _longSilenceLocked = false;
         ShouldCenter = true;
     }
 
@@ -36,11 +37,13 @@ internal sealed class TrackInfoLayoutState
         ResetForNewTrack();
     }
 
-    private bool ComputeShouldCenter(bool shouldShowLyrics)
+    private bool ComputeShouldCenter(bool shouldShowLyrics, long msUntilNextNonEmpty)
     {
         if (shouldShowLyrics)
         {
             _hasFirstLyricAppeared = true;
+            _longSilenceLocked = false;
+            return false;
         }
 
         if (!_hasFirstLyricAppeared)
@@ -48,14 +51,12 @@ internal sealed class TrackInfoLayoutState
             return true;
         }
 
-        if (shouldShowLyrics)
+        if (msUntilNextNonEmpty >= CenterAfterEmptyMs)
         {
-            _lyricsEmptySince = null;
-            return false;
+            _longSilenceLocked = true;
+            return true;
         }
 
-        _lyricsEmptySince ??= DateTimeOffset.UtcNow;
-        var emptyMs = (DateTimeOffset.UtcNow - _lyricsEmptySince.Value).TotalMilliseconds;
-        return emptyMs >= CenterAfterEmptyMs;
+        return _longSilenceLocked;
     }
 }

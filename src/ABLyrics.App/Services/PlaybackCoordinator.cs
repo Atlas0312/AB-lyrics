@@ -719,7 +719,7 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
         var shouldShowLyrics = frame.IsActive && !string.IsNullOrWhiteSpace(frame.CurrentLine);
         IsLyricsActive = shouldShowLyrics;
 
-        if (_trackInfoLayout.Update(shouldShowLyrics))
+        if (_trackInfoLayout.Update(shouldShowLyrics, frame.MsUntilNextNonEmptyLine))
         {
             ShouldCenterTrackInfo = _trackInfoLayout.ShouldCenter;
         }
