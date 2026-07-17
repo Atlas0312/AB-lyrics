@@ -39,6 +39,12 @@ public class PlaybackCoordinatorActiveSourceTests
             => Task.FromResult(NextSnapshot);
 
         public event Action<PlaybackState?>? SnapshotChanged;
+#pragma warning disable CS0067
+        public event Action<string>? AuthenticationFailed;
+#pragma warning restore CS0067
+
+        public void RaiseAuthenticationFailed(string reason)
+            => AuthenticationFailed?.Invoke(reason);
     }
 
     private sealed class FakeLyricsService : ILyricsService
@@ -117,5 +123,44 @@ public class PlaybackCoordinatorActiveSourceTests
         coordinator.SetActiveSourceAsync("Local").GetAwaiter().GetResult();
 
         Assert.Same(first, coordinator.ActivePlaybackSource);
+    }
+
+    [Fact]
+    public void AuthenticationFailed_StopsCoordinatorAndUpdatesStatus()
+    {
+        var registry = new PlaybackSourceRegistry();
+        var source = new FakeSource("Spotify", "Spotify");
+        registry.Register(source);
+        var coordinator = BuildCoordinator(registry, "Spotify");
+        coordinator.TryRestoreSessionAsync().GetAwaiter().GetResult();
+        coordinator.Start();
+
+        Assert.True(coordinator.IsRunning);
+
+        source.RaiseAuthenticationFailed("Spotify 登录已过期，请重新授权。");
+
+        Assert.False(coordinator.IsRunning);
+        Assert.Equal("Spotify 登录已过期，请重新授权。", coordinator.StatusText);
+    }
+
+    [Fact]
+    public void AuthenticationFailed_FromStaleSource_AfterSwitch_DoesNotStop()
+    {
+        var registry = new PlaybackSourceRegistry();
+        var first = new FakeSource("Spotify", "Spotify");
+        var second = new FakeSource("Local", "Local");
+        registry.Register(first);
+        registry.Register(second);
+        var coordinator = BuildCoordinator(registry, "Spotify");
+        coordinator.TryRestoreSessionAsync().GetAwaiter().GetResult();
+        coordinator.SetActiveSourceAsync("Local").GetAwaiter().GetResult();
+        coordinator.Start();
+
+        Assert.True(coordinator.IsRunning);
+
+        // 旧 source（Spotify）延后触发的认证失效不应影响新 source 的轮询。
+        first.RaiseAuthenticationFailed("Spotify 登录已过期，请重新授权。");
+
+        Assert.True(coordinator.IsRunning);
     }
 }

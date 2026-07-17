@@ -32,7 +32,11 @@ public class PlaybackCoordinatorOverrideTests
 
 #pragma warning disable CS0067
         public event Action<PlaybackState?>? SnapshotChanged;
+        public event Action<string>? AuthenticationFailed;
 #pragma warning restore CS0067
+
+        public void RaiseAuthenticationFailed(string reason)
+            => AuthenticationFailed?.Invoke(reason);
     }
 
     private sealed class FakeLyricsService : ILyricsService

@@ -46,4 +46,10 @@ public sealed class SpotifyPlaybackSource : IPlaybackSource
         add { /* Spotify: no push channel yet */ }
         remove { /* no-op */ }
     }
+
+    public event Action<string>? AuthenticationFailed
+    {
+        add { _authService.AuthenticationFailed += value; }
+        remove { _authService.AuthenticationFailed -= value; }
+    }
 }

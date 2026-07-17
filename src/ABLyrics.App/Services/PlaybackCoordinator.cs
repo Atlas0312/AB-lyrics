@@ -75,6 +75,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         _overrideStore = overrideStore ?? new LyricsOverrideStore();
         _overrides = _overrideStore.Load().ToDictionary(kv => kv.Key, kv => kv.Value);
         _activePlaybackSource = _registry.Get(initialSourceId);
+        AttachActiveSourceEvents(_activePlaybackSource);
 
         _syncOffsetMs = Math.Clamp(displaySettings?.Current.SyncOffsetMs ?? 150, 0, 500);
 
@@ -184,6 +185,15 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private void OnActiveSourceAuthenticationFailed(string reason)
+    {
+        // Spotify 这类走 OAuth 的 source，refresh_token 被撤销或长期未活动后会触发。
+        // 必须立即停止轮询，否则 PollAsync 会以每 800 ms 一次的频率继续打 401。
+        Stop();
+        StatusText = reason;
+        SourceStateChanged?.Invoke();
+    }
+
     public async Task SetActiveSourceAsync(string id, bool restoreOnly = false)
     {
         if (_activePlaybackSource is { } current
@@ -197,6 +207,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         ClearLyrics();
 
         var previous = _activePlaybackSource;
+        DetachActiveSourceEvents(previous);
         var next = _registry.Get(id);
         if (next is null)
         {
@@ -214,6 +225,7 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        AttachActiveSourceEvents(next);
         _activePlaybackSource = next;
         try
         {
@@ -224,6 +236,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
         catch (Exception ex)
         {
             _activePlaybackSource = previous;
+            DetachActiveSourceEvents(next);
+            AttachActiveSourceEvents(previous);
             StatusText = $"连接 {next.DisplayName} 失败：{ex.Message}";
         }
 
@@ -643,7 +657,20 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
 
     public void Dispose()
     {
+        DetachActiveSourceEvents(_activePlaybackSource);
         _timer.Stop();
         _timer.Dispose();
+    }
+
+    private void AttachActiveSourceEvents(IPlaybackSource? source)
+    {
+        if (source is null) return;
+        source.AuthenticationFailed += OnActiveSourceAuthenticationFailed;
+    }
+
+    private void DetachActiveSourceEvents(IPlaybackSource? source)
+    {
+        if (source is null) return;
+        source.AuthenticationFailed -= OnActiveSourceAuthenticationFailed;
     }
 }

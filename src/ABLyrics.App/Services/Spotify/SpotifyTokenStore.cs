@@ -32,8 +32,11 @@ internal sealed class SpotifyTokenStore
             var jsonBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
             return JsonSerializer.Deserialize<SpotifyTokenData>(jsonBytes, JsonOptions);
         }
-        catch
+        catch (Exception ex)
         {
+            // 别再静默吞了——DPAPI 解密失败 / 文件被别的进程半写 / 反序列化损坏 都会让用户误判为
+            // "Spotify 服务端撤销"。至少在 DEBUG 时把异常类型与堆栈写到控制台，便于排查。
+            DevExceptionReporter.Show(ex, "读取 Spotify token 缓存失败，将视为未登录");
             return null;
         }
     }

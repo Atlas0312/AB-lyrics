@@ -25,6 +25,9 @@ public class PlaybackCoordinatorLocalMissingPromptTests
         public Task<PlaybackState?> GetSnapshotAsync(CancellationToken cancellationToken = default)
             => Task.FromResult<PlaybackState?>(null);
         public event Action<PlaybackState?>? SnapshotChanged;
+#pragma warning disable CS0067
+        public event Action<string>? AuthenticationFailed;
+#pragma warning restore CS0067
     }
 
     private sealed class FakeLyricsService : ILyricsService

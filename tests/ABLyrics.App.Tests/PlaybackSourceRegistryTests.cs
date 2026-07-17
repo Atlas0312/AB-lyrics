@@ -38,6 +38,9 @@ public class PlaybackSourceRegistryTests
         }
 
         public event Action<PlaybackState?>? SnapshotChanged;
+#pragma warning disable CS0067
+        public event Action<string>? AuthenticationFailed;
+#pragma warning restore CS0067
     }
 
     [Fact]

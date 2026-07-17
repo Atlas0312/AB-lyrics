@@ -28,6 +28,8 @@ public sealed class SpotifyAuthService : ISpotifyAuthService, IDisposable
 
     public bool IsAuthenticated => _tokens is not null && !string.IsNullOrWhiteSpace(_tokens.RefreshToken);
 
+    public event Action<string>? AuthenticationFailed;
+
     public async Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
     {
         if (_tokens is null || string.IsNullOrWhiteSpace(_tokens.RefreshToken))
@@ -142,11 +144,15 @@ public sealed class SpotifyAuthService : ISpotifyAuthService, IDisposable
         }
     }
 
-    public void Logout()
+    public void Logout(string? reason = null)
     {
         _tokens = null;
         _tokenStore.Clear();
+        AuthenticationFailed?.Invoke(reason ?? "Spotify 登录已过期，请重新授权。");
     }
+
+    public Task ForceRefreshAsync(CancellationToken cancellationToken = default)
+        => RefreshAsync(cancellationToken);
 
     private async Task ExchangeCodeAsync(string code, string verifier, CancellationToken cancellationToken)
     {
@@ -194,7 +200,7 @@ public sealed class SpotifyAuthService : ISpotifyAuthService, IDisposable
 
             if (response.StatusCode == HttpStatusCode.BadRequest)
             {
-                Logout();
+                Logout("Spotify 登录已过期，请重新授权。");
                 throw new InvalidOperationException("Spotify 登录已过期，请重新授权。");
             }
 
