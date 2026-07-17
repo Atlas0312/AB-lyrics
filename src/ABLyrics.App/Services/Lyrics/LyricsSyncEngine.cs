@@ -68,17 +68,18 @@ public sealed class LyricsSyncEngine
     {
         if (_lyricsData?.Lines is { Count: > 0 } lines)
         {
+            var msUntilNext = FindMsUntilNextNonEmpty(lines, progressMs);
             var firstStart = lines[0].StartTime ?? 0;
             if (progressMs < firstStart)
             {
-                return new LyricsFrame(string.Empty, string.Empty, string.Empty, true, false);
+                return new LyricsFrame(string.Empty, string.Empty, string.Empty, true, false, msUntilNext);
             }
 
             var index = FindLineIndex(lines, progressMs);
-            var current = lines[index].Text;
-            var previous = index > 0 ? lines[index - 1].Text : string.Empty;
-            var next = index < lines.Count - 1 ? lines[index + 1].Text : string.Empty;
-            return new LyricsFrame(current, previous, next, true, true);
+            var current = lines[index].Text ?? string.Empty;
+            var previous = index > 0 ? lines[index - 1].Text ?? string.Empty : string.Empty;
+            var next = index < lines.Count - 1 ? lines[index + 1].Text ?? string.Empty : string.Empty;
+            return new LyricsFrame(current, previous, next, true, true, msUntilNext);
         }
 
         if (_plainLines.Length > 0)
@@ -86,10 +87,29 @@ public sealed class LyricsSyncEngine
             var durationMs = _durationMs > 0 ? _durationMs : _plainLines.Length * 3000L;
             var index = (int)(progressMs * _plainLines.Length / durationMs);
             index = Math.Clamp(index, 0, _plainLines.Length - 1);
-            return new LyricsFrame(_plainLines[index], string.Empty, string.Empty, false, true);
+            return new LyricsFrame(_plainLines[index], string.Empty, string.Empty, false, true, 0);
         }
 
         return LyricsFrame.Empty;
+    }
+
+    private static long FindMsUntilNextNonEmpty(IReadOnlyList<ILineInfo> lines, long progressMs)
+    {
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var start = lines[i].StartTime ?? 0;
+            if (start <= progressMs)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lines[i].Text))
+            {
+                return start - progressMs;
+            }
+        }
+
+        return long.MaxValue;
     }
 
     private static int FindLineIndex(IReadOnlyList<ILineInfo> lines, long progressMs)
@@ -117,7 +137,9 @@ public readonly record struct LyricsFrame(
     string PreviousLine,
     string NextLine,
     bool IsSynced,
-    bool IsActive)
+    bool IsActive,
+    long MsUntilNextNonEmptyLine)
 {
-    public static LyricsFrame Empty { get; } = new(string.Empty, string.Empty, string.Empty, false, false);
+    public static LyricsFrame Empty { get; } =
+        new(string.Empty, string.Empty, string.Empty, false, false, long.MaxValue);
 }

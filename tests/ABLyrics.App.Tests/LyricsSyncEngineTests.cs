@@ -139,4 +139,87 @@ public class LyricsSyncEngineTests
         Assert.True(frame.IsSynced);
         Assert.Equal("hello", frame.CurrentLine);
     }
+
+    [Fact]
+    public void GetFrame_OnEmptyLine_ReportsMsUntilNextNonEmpty()
+    {
+        var data = NewDataWith(
+            new LineInfo { Text = "verse", StartTime = 0 },
+            new LineInfo { Text = "   ", StartTime = 5000 },
+            new LineInfo { Text = "chorus", StartTime = 12000 });
+
+        var engine = new LyricsSyncEngine();
+        engine.LoadParsed(data, plainLines: []);
+
+        var frame = engine.GetFrame(5000);
+
+        Assert.True(string.IsNullOrWhiteSpace(frame.CurrentLine));
+        Assert.Equal(7000, frame.MsUntilNextNonEmptyLine);
+    }
+
+    [Fact]
+    public void GetFrame_SkipsConsecutiveEmptyLines_WhenComputingLookahead()
+    {
+        var data = NewDataWith(
+            new LineInfo { Text = "a", StartTime = 0 },
+            new LineInfo { Text = "", StartTime = 1000 },
+            new LineInfo { Text = "  ", StartTime = 2000 },
+            new LineInfo { Text = "b", StartTime = 8000 });
+
+        var engine = new LyricsSyncEngine();
+        engine.LoadParsed(data, plainLines: []);
+
+        var frame = engine.GetFrame(1000);
+
+        Assert.Equal(7000, frame.MsUntilNextNonEmptyLine);
+    }
+
+    [Fact]
+    public void GetFrame_WhenNoLaterNonEmpty_ReturnsMaxValue()
+    {
+        var data = NewDataWith(
+            new LineInfo { Text = "last", StartTime = 0 },
+            new LineInfo { Text = "", StartTime = 4000 });
+
+        var engine = new LyricsSyncEngine();
+        engine.LoadParsed(data, plainLines: []);
+
+        var frame = engine.GetFrame(4000);
+
+        Assert.Equal(long.MaxValue, frame.MsUntilNextNonEmptyLine);
+    }
+
+    [Fact]
+    public void GetFrame_BeforeFirstLine_ReportsMsUntilFirstNonEmpty()
+    {
+        var data = NewDataWith(new LineInfo { Text = "hello", StartTime = 5000 });
+
+        var engine = new LyricsSyncEngine();
+        engine.LoadParsed(data, plainLines: []);
+
+        var frame = engine.GetFrame(2000);
+
+        Assert.False(frame.IsActive);
+        Assert.Equal(3000, frame.MsUntilNextNonEmptyLine);
+    }
+
+    [Fact]
+    public void GetFrame_PlainLines_MsUntilNextNonEmptyIsZero()
+    {
+        var engine = new LyricsSyncEngine();
+        engine.SetDurationMs(9000);
+        engine.LoadParsed(null, new[] { "a", "b", "c" });
+
+        var frame = engine.GetFrame(1000);
+
+        Assert.Equal(0, frame.MsUntilNextNonEmptyLine);
+    }
+
+    [Fact]
+    public void GetFrame_EmptyEngine_MsUntilNextNonEmptyIsMaxValue()
+    {
+        var engine = new LyricsSyncEngine();
+        var frame = engine.GetFrame(0);
+        Assert.Equal(long.MaxValue, frame.MsUntilNextNonEmptyLine);
+    }
 }
