@@ -96,4 +96,47 @@ public class LyricsSyncEngineTests
         Assert.False(frame.IsSynced);
         Assert.Equal("plain-a", frame.CurrentLine);
     }
+
+    [Fact]
+    public void Clear_AfterSyncedData_GetFrameReturnsEmpty()
+    {
+        var data = NewDataWith(new LineInfo { Text = "synced", StartTime = 1000 });
+        var engine = new LyricsSyncEngine();
+        engine.LoadParsed(data, new[] { "synced" });
+
+        engine.Clear();
+
+        var frame = engine.GetFrame(1500);
+        Assert.False(frame.IsActive);
+        Assert.Equal(string.Empty, frame.CurrentLine);
+    }
+
+    [Fact]
+    public void Load_Null_DelegatesToClear()
+    {
+        var engine = new LyricsSyncEngine();
+        engine.LoadParsed(null, new[] { "plain" });
+
+        engine.Load(null);
+
+        var frame = engine.GetFrame(0);
+        Assert.False(frame.IsActive);
+        Assert.Equal(string.Empty, frame.CurrentLine);
+    }
+
+    [Fact]
+    public void Load_WithSyncedLyrics_DelegatesToLoadParsed()
+    {
+        var engine = new LyricsSyncEngine();
+        engine.Load(new LyricsResult
+        {
+            Source = "test",
+            SyncedLyrics = "[00:01.00] hello\n[00:02.00] world",
+            PlainLyrics = "ignored-when-synced",
+        });
+
+        var frame = engine.GetFrame(1500);
+        Assert.True(frame.IsSynced);
+        Assert.Equal("hello", frame.CurrentLine);
+    }
 }

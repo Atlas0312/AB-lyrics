@@ -45,22 +45,22 @@ public class PlaybackCoordinatorOverrideTests
         public int FetchLyricsCallCount { get; private set; }
 
         // 记录每个 origin 拉取时返回的内容（缺省为 null）
-        public Dictionary<CandidateOrigin, LyricsResult?> CandidateResponses { get; } = new();
+        public Dictionary<CandidateOrigin, LyricsCandidate?> CandidateResponses { get; } = new();
 
-        public Task<LyricsResult?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
+        public Task<LyricsCandidate?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
         {
             FetchLyricsCallCount++;
-            return Task.FromResult<LyricsResult?>(null);
+            return Task.FromResult<LyricsCandidate?>(null);
         }
 
-        public Task<LyricsResult?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
-            => Task.FromResult<LyricsResult?>(null);
+        public Task<LyricsCandidate?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
+            => Task.FromResult<LyricsCandidate?>(null);
 
-        public Task<LyricsResult?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
+        public Task<LyricsCandidate?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
         {
             return CandidateResponses.TryGetValue(origin, out var result)
                 ? Task.FromResult(result)
-                : Task.FromResult<LyricsResult?>(null);
+                : Task.FromResult<LyricsCandidate?>(null);
         }
     }
 
@@ -150,11 +150,14 @@ public class PlaybackCoordinatorOverrideTests
             {
                 CandidateResponses =
                 {
-                    [new CandidateOrigin.Local(lrcPath)] = new LyricsResult
+                    [new CandidateOrigin.Local(lrcPath)] = new LyricsCandidate
                     {
                         Source = "Local",
+                        Label = "覆盖项",
                         SyncedLyrics = "[00:01.00]测试歌词\n",
                         PlainLyrics = "测试歌词",
+                        DurationMs = 269_000,
+                        Origin = new CandidateOrigin.Local(lrcPath),
                     },
                 },
             };
@@ -245,11 +248,14 @@ public class PlaybackCoordinatorOverrideTests
             {
                 CandidateResponses =
                 {
-                    [new CandidateOrigin.Local(lrcPath)] = new LyricsResult
+                    [new CandidateOrigin.Local(lrcPath)] = new LyricsCandidate
                     {
                         Source = "Local",
+                        Label = "覆盖项",
                         SyncedLyrics = "[00:01.00]X\n",
                         PlainLyrics = "X",
+                        DurationMs = 269_000,
+                        Origin = new CandidateOrigin.Local(lrcPath),
                     },
                 },
             };
@@ -393,11 +399,14 @@ public class PlaybackCoordinatorOverrideTests
             {
                 CandidateResponses =
                 {
-                    [new CandidateOrigin.Local(lrcPath)] = new LyricsResult
+                    [new CandidateOrigin.Local(lrcPath)] = new LyricsCandidate
                     {
                         Source = "Local",
+                        Label = "覆盖项",
                         SyncedLyrics = "[00:01.00]覆盖项内容\n",
                         PlainLyrics = "覆盖项内容",
+                        DurationMs = 269_000,
+                        Origin = new CandidateOrigin.Local(lrcPath),
                     },
                 },
             };
@@ -442,11 +451,14 @@ public class PlaybackCoordinatorOverrideTests
             {
                 CandidateResponses =
                 {
-                    [new CandidateOrigin.Local(lrcPath)] = new LyricsResult
+                    [new CandidateOrigin.Local(lrcPath)] = new LyricsCandidate
                     {
                         Source = "Local",
+                        Label = "覆盖项",
                         SyncedLyrics = "[00:01.00]旧歌歌词\n",
                         PlainLyrics = "旧歌歌词",
+                        DurationMs = 269_000,
+                        Origin = new CandidateOrigin.Local(lrcPath),
                     },
                 },
             };

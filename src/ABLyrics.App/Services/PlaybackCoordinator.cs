@@ -309,61 +309,240 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     {
         _lyricsActiveSource = sourceName;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ActiveSource)));
-        await ReloadCurrentTrackAsync().ConfigureAwait(false);
+        // 用户显式切源：绕过 override，直接按 source 名取。
+        await LoadLyricsAsync(new LyricsLoadRequest
+        {
+            Source = LyricsLoadSource.ExplicitSource,
+            ExplicitSourceName = sourceName,
+            FlashOnLoading = true,
+            PromptLocalMissing = true,
+            FlushFrameImmediately = false,
+        }).ConfigureAwait(false);
     }
 
     public async Task ForceReloadAsync()
     {
         if (_loadedTrackId is null) return;
-        await ReloadCurrentTrackAsync().ConfigureAwait(false);
+        // 🔄 强制走在线源兜底链，不读 override；和"切源"语义对齐。
+        await LoadLyricsAsync(new LyricsLoadRequest
+        {
+            Source = LyricsLoadSource.Default,
+            FailurePolicy = LyricsLoadFailurePolicy.FallbackToNext,
+            FlashOnLoading = true,
+            FlushFrameImmediately = false,
+        }).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 显式重载当前曲目。等价于按当前源（"Local" 时弹缺失提示）重新取一遍。
+    /// 保留原方法名以便测试与老代码使用。
+    /// </summary>
     internal async Task ReloadCurrentTrackAsync()
     {
         if (_loadedTrackId is null) return;
-
-        var currentTrack = new TrackInfo
+        // 按当前源选择：Local → 走 ExplicitSource + 提示；其它 → 也走 ExplicitSource；
+        // 空源 → 走默认 LRCLIB 兜底。
+        if (string.IsNullOrWhiteSpace(_lyricsActiveSource))
         {
-            Id = _loadedTrackId,
-            Name = TrackTitle,
-            Artist = ArtistName,
-            Album = _trackAlbum,
-            DurationMs = _trackDurationMs,
-        };
-
-        LyricsResult? lyrics;
-        if (!string.IsNullOrWhiteSpace(_lyricsActiveSource))
-        {
-            if (_lyricsActiveSource != "Local")
+            await LoadLyricsAsync(new LyricsLoadRequest
             {
-                StatusText = $"正在尝试 {_lyricsActiveSource}…";
-                LoadingFlash?.Invoke();
-            }
-            lyrics = await _lyricsService.FetchFromSourceAsync(currentTrack, _lyricsActiveSource).ConfigureAwait(false);
+                Source = LyricsLoadSource.Default,
+                FailurePolicy = LyricsLoadFailurePolicy.FallbackToNext,
+                FlashOnLoading = true,
+                FlushFrameImmediately = false,
+            }).ConfigureAwait(false);
+            return;
         }
-        else
+
+        await LoadLyricsAsync(new LyricsLoadRequest
         {
-            StatusText = "正在尝试 LRCLIB…";
+            Source = LyricsLoadSource.ExplicitSource,
+            ExplicitSourceName = _lyricsActiveSource,
+            FlashOnLoading = _lyricsActiveSource != "Local",
+            PromptLocalMissing = true,
+            FlushFrameImmediately = false,
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 清除当前曲目的覆盖项（picker 的 ✕ 按钮走这里），然后按"无 override"重新加载。
+    /// </summary>
+    public Task ReloadWithoutOverrideAsync()
+    {
+        if (_loadedTrackId is null) return Task.CompletedTask;
+        var track = SnapshotCurrentTrack();
+        var key = TrackKey.From(track);
+        _overrides.Remove(key);
+        return LoadLyricsAsync(new LyricsLoadRequest
+        {
+            Source = LyricsLoadSource.Default,
+            FailurePolicy = LyricsLoadFailurePolicy.FallbackToNext,
+            FlashOnLoading = true,
+            FlushFrameImmediately = false,
+        });
+    }
+
+    /// <summary>
+    /// 唯一的"加载歌词"入口。所有 UI 操作都收敛到这里。
+    /// 副作用（LoadingFlash / StatusText / LyricsSource / 引擎喂入 / Local 缺失提示）一律集中处理。
+    /// </summary>
+    internal async Task LoadLyricsAsync(LyricsLoadRequest request)
+    {
+        if (_loadedTrackId is null) return;
+
+        var track = SnapshotCurrentTrack();
+
+        if (request.FlashOnLoading && ShouldFlashFor(request))
+        {
+            StatusText = BuildLoadingMessage(request);
             LoadingFlash?.Invoke();
-            lyrics = await _lyricsService.FetchLyricsAsync(currentTrack).ConfigureAwait(false);
         }
 
-        _syncEngine.SetDurationMs(_trackDurationMs);
-        _syncEngine.Load(lyrics);
-        LyricsSource = lyrics?.Source ?? (string.IsNullOrEmpty(_lyricsActiveSource) ? string.Empty : _lyricsActiveSource);
-        StatusText = lyrics is null ? "暂无歌词" : string.Empty;
+        var candidate = await ResolveCandidateAsync(track, request).ConfigureAwait(false);
 
-        if (_lyricsActiveSource == "Local" && lyrics is null)
+        ApplyCandidateToEngine(candidate, track.DurationMs);
+        _overrideCandidate = candidate;
+        LyricsSource = ResolveLyricsSource(candidate, request);
+        StatusText = ResolveFinalStatusText(candidate, request);
+
+        if (request.PromptLocalMissing
+            && request.Source == LyricsLoadSource.ExplicitSource
+            && request.ExplicitSourceName == "Local"
+            && candidate is null)
         {
-            bool added;
-            lock (_localPromptLock)
-            {
-                added = _localPromptedTrackIds.Add(currentTrack.Id);
-            }
-            if (added && _lyricsBehavior.Current.PromptForLocalLyricsOnMissing)
-            {
-                LocalLyricsMissing?.Invoke(currentTrack);
-            }
+            TriggerLocalMissingPrompt(track);
+        }
+
+        if (request.FlushFrameImmediately)
+        {
+            UpdateLyricFrame(GetInterpolatedProgressMs());
+        }
+    }
+
+    private TrackInfo SnapshotCurrentTrack() => new()
+    {
+        Id = _loadedTrackId ?? string.Empty,
+        Name = _trackTitle,
+        Artist = _artistName,
+        Album = _trackAlbum,
+        DurationMs = _trackDurationMs,
+    };
+
+    private static bool ShouldFlashFor(LyricsLoadRequest request) => request.Source switch
+    {
+        LyricsLoadSource.ExplicitSource => request.ExplicitSourceName != "Local",
+        LyricsLoadSource.Default => true,
+        _ => true,
+    };
+
+    private static string BuildLoadingMessage(LyricsLoadRequest request) => request.Source switch
+    {
+        LyricsLoadSource.ExplicitSource => $"正在尝试 {request.ExplicitSourceName}…",
+        LyricsLoadSource.Default => "正在尝试 LRCLIB…",
+        _ => "正在加载歌词…",
+    };
+
+    private async Task<LyricsCandidate?> ResolveCandidateAsync(TrackInfo track, LyricsLoadRequest request)
+    {
+        switch (request.Source)
+        {
+            case LyricsLoadSource.ExplicitCandidate:
+                return NormalizeCandidate(request.ExplicitCandidate);
+
+            case LyricsLoadSource.ExplicitSource:
+                {
+                    var source = request.ExplicitSourceName ?? string.Empty;
+                    var candidate = await _lyricsService.FetchFromSourceAsync(track, source).ConfigureAwait(false);
+                    return NormalizeCandidate(candidate);
+                }
+
+            case LyricsLoadSource.OverrideOnly:
+                {
+                    if (request.OverrideOrigin is null) return null;
+                    var candidate = await _lyricsService
+                        .FetchCandidateAsync(track, request.OverrideOrigin).ConfigureAwait(false);
+                    return NormalizeCandidate(candidate);
+                }
+
+            case LyricsLoadSource.Default:
+                {
+                    var key = TrackKey.From(track);
+                    if (_overrides.TryGetValue(key, out var persisted))
+                    {
+                        var candidate = await _lyricsService
+                            .FetchCandidateAsync(track, persisted).ConfigureAwait(false);
+                        if (candidate is not null)
+                        {
+                            return NormalizeCandidate(candidate);
+                        }
+                        // PreserveOverride：override 失败保留状态，不回退；由 ResolveFinalStatusText 提示。
+                        if (request.FailurePolicy == LyricsLoadFailurePolicy.PreserveOverride)
+                        {
+                            return null;
+                        }
+                    }
+
+                    var lyrics = await _lyricsService.FetchLyricsAsync(track).ConfigureAwait(false);
+                    return NormalizeCandidate(lyrics);
+                }
+
+            default:
+                return null;
+        }
+    }
+
+    private static LyricsCandidate? NormalizeCandidate(LyricsCandidate? candidate)
+    {
+        if (candidate is null) return null;
+        var (synced, plain) = LyricsTextNormalizer.NormalizeAll(candidate.SyncedLyrics, candidate.PlainLyrics);
+        return new LyricsCandidate
+        {
+            Source = candidate.Source,
+            Label = candidate.Label,
+            SyncedLyrics = synced,
+            PlainLyrics = plain,
+            DurationMs = candidate.DurationMs,
+            Origin = candidate.Origin,
+            IsAvailable = candidate.IsAvailable,
+        };
+    }
+
+    private string ResolveLyricsSource(LyricsCandidate? candidate, LyricsLoadRequest request)
+    {
+        if (candidate is not null) return candidate.Source;
+        // 没拿到歌词时：保留原有"显示当前来源"的语义。
+        return request.Source switch
+        {
+            LyricsLoadSource.ExplicitSource => request.ExplicitSourceName ?? string.Empty,
+            LyricsLoadSource.OverrideOnly => string.Empty,
+            _ => string.IsNullOrEmpty(_lyricsActiveSource) ? string.Empty : _lyricsActiveSource,
+        };
+    }
+
+    private string ResolveFinalStatusText(LyricsCandidate? candidate, LyricsLoadRequest request)
+    {
+        if (candidate is not null) return string.Empty;
+
+        // override 失败且策略是保留 → 显式提示，避免看起来像"暂无歌词"。
+        if (request.Source == LyricsLoadSource.OverrideOnly
+            || (request.Source == LyricsLoadSource.Default && request.FailurePolicy == LyricsLoadFailurePolicy.PreserveOverride))
+        {
+            return "覆盖项源暂不可用，请稍候重试";
+        }
+
+        return "暂无歌词";
+    }
+
+    private void TriggerLocalMissingPrompt(TrackInfo track)
+    {
+        bool added;
+        lock (_localPromptLock)
+        {
+            added = _localPromptedTrackIds.Add(track.Id);
+        }
+        if (added && _lyricsBehavior.Current.PromptForLocalLyricsOnMissing)
+        {
+            LocalLyricsMissing?.Invoke(track);
         }
     }
 
@@ -432,35 +611,29 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
         ClearLyricLines();
         // 立刻同步清空引擎，防止 await 网络/文件 IO 期间 PollAsync 用旧引擎数据
         // 重新喂出上一首歌的 CurrentLine/PreviousLine（Bug 3）。
-        _syncEngine.Load(null);
+        _syncEngine.Clear();
 
         var key = TrackKey.From(track);
-        if (_overrides.TryGetValue(key, out var persistedOrigin))
+        if (_overrides.TryGetValue(key, out var persisted))
         {
-            var candidate = await TryLoadFromOriginAsync(track, persistedOrigin).ConfigureAwait(false);
-            if (candidate is not null)
+            await LoadLyricsAsync(new LyricsLoadRequest
             {
-                _overrideCandidate = candidate;
-                ApplyCandidateToEngine(candidate);
-                LyricsSource = candidate.Source;
-                StatusText = string.Empty;
-                return;
-            }
-            // 覆盖项源此次加载失败：保留 override，不回退到 LRCLIB。
-            // 覆盖项只能由 picker 上的「✕」按钮显式移除，避免一次性失败把它悄悄丢掉。
-            _overrideCandidate = null;
-            LyricsSource = string.Empty;
-            StatusText = "覆盖项源暂不可用，请稍候重试";
+                Source = LyricsLoadSource.OverrideOnly,
+                OverrideOrigin = persisted,
+                FailurePolicy = LyricsLoadFailurePolicy.PreserveOverride,
+                FlashOnLoading = false,
+                FlushFrameImmediately = false,
+            }).ConfigureAwait(false);
             return;
         }
 
-        StatusText = "正在尝试 LRCLIB…";
-        LoadingFlash?.Invoke();
-        var lyrics = await _lyricsService.FetchLyricsAsync(track).ConfigureAwait(false);
-        _syncEngine.SetDurationMs(_trackDurationMs);
-        _syncEngine.Load(lyrics);
-        LyricsSource = lyrics?.Source ?? (string.IsNullOrEmpty(_lyricsActiveSource) ? string.Empty : _lyricsActiveSource);
-        StatusText = lyrics is null ? "暂无歌词" : string.Empty;
+        await LoadLyricsAsync(new LyricsLoadRequest
+        {
+            Source = LyricsLoadSource.Default,
+            FailurePolicy = LyricsLoadFailurePolicy.FallbackToNext,
+            FlashOnLoading = true,
+            FlushFrameImmediately = false,
+        }).ConfigureAwait(false);
     }
 
     private long GetInterpolatedProgressMs()
@@ -494,59 +667,31 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
     /// </summary>
     public async Task ApplyCandidateAsync(LyricsCandidate candidate)
     {
-        var track = new TrackInfo
-        {
-            Id = _loadedTrackId ?? string.Empty,
-            Name = _trackTitle,
-            Artist = _artistName,
-            Album = _trackAlbum,
-            DurationMs = _trackDurationMs,
-        };
+        if (_loadedTrackId is null) return;
+
+        var track = SnapshotCurrentTrack();
         var key = TrackKey.From(track);
         _overrides[key] = candidate.Origin;
         _overrideStore.Save(key, candidate.Origin);
-        // 兜底：无论 candidate 从哪条路径（picker 搜索、覆盖项恢复…）来，
-        // 喂入主引擎前都确保 t2s 繁→简 已应用，与 AppBar 主显示一致。
-        var (synced, plain) = LyricsTextNormalizer.NormalizeAll(candidate.SyncedLyrics, candidate.PlainLyrics);
-        var normalized = new LyricsCandidate
+
+        await LoadLyricsAsync(new LyricsLoadRequest
         {
-            Source = candidate.Source,
-            Label = candidate.Label,
-            SyncedLyrics = synced,
-            PlainLyrics = plain,
-            DurationMs = candidate.DurationMs,
-            Origin = candidate.Origin,
-            IsAvailable = candidate.IsAvailable,
-        };
-        _overrideCandidate = normalized;
-        ApplyCandidateToEngine(normalized);
-        LyricsSource = normalized.Source;
-        StatusText = string.Empty;
-        LoadingFlash?.Invoke();
-        // 立刻刷一帧，确保即使在暂停状态下 CurrentLine 等也立刻反映新候选；
-        // PollAsync/TickInterpolation 下次也会再刷一次，重复但不会出错。
-        UpdateLyricFrame(GetInterpolatedProgressMs());
-        await Task.CompletedTask;
+            Source = LyricsLoadSource.ExplicitCandidate,
+            ExplicitCandidate = candidate,
+            FlashOnLoading = true,
+            FlushFrameImmediately = true,
+        }).ConfigureAwait(false);
     }
 
-    private async Task<LyricsCandidate?> TryLoadFromOriginAsync(TrackInfo track, CandidateOrigin origin)
+    private void ApplyCandidateToEngine(LyricsCandidate? candidate, int durationMs)
     {
-        var result = await _lyricsService.FetchCandidateAsync(track, origin).ConfigureAwait(false);
-        if (result is null) return null;
-        return new LyricsCandidate
+        _syncEngine.SetDurationMs(durationMs);
+        if (candidate is null)
         {
-            Source = result.Source,
-            Label = "覆盖项",
-            SyncedLyrics = result.SyncedLyrics,
-            PlainLyrics = result.PlainLyrics,
-            DurationMs = track.DurationMs,
-            Origin = origin,
-        };
-    }
+            _syncEngine.Clear();
+            return;
+        }
 
-    private void ApplyCandidateToEngine(LyricsCandidate candidate)
-    {
-        _syncEngine.SetDurationMs(candidate.DurationMs);
         if (!string.IsNullOrWhiteSpace(candidate.SyncedLyrics))
         {
             var data = LrcParser.Parse(candidate.SyncedLyrics);
@@ -564,7 +709,7 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
         }
         else
         {
-            _syncEngine.LoadParsed(null, Array.Empty<string>());
+            _syncEngine.Clear();
         }
     }
 
@@ -608,7 +753,7 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
     private void ClearLyrics()
     {
         ClearLyricLines();
-        _syncEngine.Load(null);
+        _syncEngine.Clear();
         lock (_localPromptLock)
         {
             _localPromptedTrackIds.Clear();

@@ -107,6 +107,8 @@ public class LyricsServiceFetchCandidateTests : IDisposable
         Assert.Equal("Local", result!.Source);
         Assert.Equal("[00:01.00] hello", result.SyncedLyrics);
         Assert.Equal("[00:01.00] hello", result.PlainLyrics);
+        Assert.IsType<CandidateOrigin.Local>(result.Origin);
+        Assert.Equal(file, ((CandidateOrigin.Local)result.Origin).FilePath);
     }
 
     [Fact]
@@ -139,6 +141,8 @@ public class LyricsServiceFetchCandidateTests : IDisposable
         Assert.Equal("LRCLIB", result!.Source);
         Assert.Equal("[00:01.00] synced", result.SyncedLyrics);
         Assert.Equal("synced", result.PlainLyrics);
+        Assert.IsType<CandidateOrigin.Lrclib>(result.Origin);
+        Assert.Equal(123, ((CandidateOrigin.Lrclib)result.Origin).LrclibId);
     }
 
     [Fact]
@@ -168,6 +172,38 @@ public class LyricsServiceFetchCandidateTests : IDisposable
 
         var result = await service
             .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(1), CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    // ---------- FetchLyricsAsync 兜底链 ----------
+
+    [Fact]
+    public async Task FetchLyricsAsync_LrclibMiss_FallsBackToLocal()
+    {
+        var file = Path.Combine(_dir, "Artist - Album - Song.lrc");
+        File.WriteAllText(file, "[00:01.00] local synced\n");
+
+        var handler = new StubHandler();
+        handler.Enqueue(HttpStatusCode.NotFound, "");
+        var service = NewService(BuildLrcLibClient(handler));
+
+        var result = await service.FetchLyricsAsync(Track(), CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("Local", result!.Source);
+        Assert.Contains("local synced", result.SyncedLyrics);
+        Assert.IsType<CandidateOrigin.Local>(result.Origin);
+    }
+
+    [Fact]
+    public async Task FetchLyricsAsync_LrclibMiss_NoLocalFile_ReturnsNull()
+    {
+        var handler = new StubHandler();
+        handler.Enqueue(HttpStatusCode.NotFound, "");
+        var service = NewService(BuildLrcLibClient(handler));
+
+        var result = await service.FetchLyricsAsync(Track(), CancellationToken.None);
 
         Assert.Null(result);
     }

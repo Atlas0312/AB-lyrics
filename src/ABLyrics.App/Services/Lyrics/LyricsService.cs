@@ -35,7 +35,7 @@ public sealed class LyricsService : ILyricsService
         _availableSources = sources.AsReadOnly();
     }
 
-    public async Task<LyricsResult?> FetchLyricsAsync(TrackInfo track, CancellationToken cancellationToken = default)
+    public async Task<LyricsCandidate?> FetchLyricsAsync(TrackInfo track, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -54,27 +54,42 @@ public sealed class LyricsService : ILyricsService
                 var netease = await FetchFromNetEaseAsync(track, cancellationToken).ConfigureAwait(false);
                 if (netease is not null && !string.IsNullOrWhiteSpace(netease.SyncedLyrics))
                 {
-                    return new LyricsResult
+                    return new LyricsCandidate
                     {
                         Source = netease.Source,
+                        Label = netease.Label,
                         SyncedLyrics = netease.SyncedLyrics,
                         PlainLyrics = lrcLibResult.PlainLyrics,
+                        DurationMs = netease.DurationMs,
+                        Origin = netease.Origin,
                     };
                 }
+            }
+
+            // Prefer Local synced over LRCLIB plain-only when available.
+            var localOverPlain = await _localProvider.GetAsync(track, cancellationToken).ConfigureAwait(false);
+            if (localOverPlain is not null && !string.IsNullOrWhiteSpace(localOverPlain.SyncedLyrics))
+            {
+                return localOverPlain;
             }
 
             return lrcLibResult;
         }
 
-        if (string.IsNullOrWhiteSpace(_netEaseSettings.MusicU))
+        // LRCLIB miss → Netease (if configured) → Local
+        if (!string.IsNullOrWhiteSpace(_netEaseSettings.MusicU))
         {
-            return null;
+            var netease = await FetchFromNetEaseAsync(track, cancellationToken).ConfigureAwait(false);
+            if (netease is not null)
+            {
+                return netease;
+            }
         }
 
-        return await FetchFromNetEaseAsync(track, cancellationToken).ConfigureAwait(false);
+        return await _localProvider.GetAsync(track, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<LyricsResult?> FetchFromSourceAsync(TrackInfo track, string sourceName, CancellationToken cancellationToken = default)
+    public async Task<LyricsCandidate?> FetchFromSourceAsync(TrackInfo track, string sourceName, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -93,7 +108,7 @@ public sealed class LyricsService : ILyricsService
 
     public IReadOnlyList<string> AvailableSources => _availableSources;
 
-    public async Task<LyricsResult?> FetchCandidateAsync(
+    public async Task<LyricsCandidate?> FetchCandidateAsync(
         TrackInfo track,
         CandidateOrigin origin,
         CancellationToken cancellationToken = default)
@@ -107,11 +122,14 @@ public sealed class LyricsService : ILyricsService
                     if (!File.Exists(local.FilePath)) return null;
                     var content = await File.ReadAllTextAsync(local.FilePath, cancellationToken)
                         .ConfigureAwait(false);
-                    return new LyricsResult
+                    return new LyricsCandidate
                     {
                         Source = "Local",
+                        Label = Path.GetFileNameWithoutExtension(local.FilePath),
                         SyncedLyrics = content,
                         PlainLyrics = content,
+                        DurationMs = track.DurationMs,
+                        Origin = origin,
                     };
                 }
             case CandidateOrigin.Lrclib:
@@ -128,15 +146,25 @@ public sealed class LyricsService : ILyricsService
                     var plain = Normalize(resp.PlainLyrics);
                     if (!string.IsNullOrWhiteSpace(synced))
                     {
-                        return new LyricsResult
+                        return new LyricsCandidate
                         {
                             Source = "LRCLIB",
+                            Label = "LRCLIB",
                             SyncedLyrics = synced,
                             PlainLyrics = plain,
+                            DurationMs = track.DurationMs,
+                            Origin = origin,
                         };
                     }
                     return !string.IsNullOrWhiteSpace(plain)
-                        ? new LyricsResult { Source = "LRCLIB", PlainLyrics = plain }
+                        ? new LyricsCandidate
+                        {
+                            Source = "LRCLIB",
+                            Label = "LRCLIB",
+                            PlainLyrics = plain,
+                            DurationMs = track.DurationMs,
+                            Origin = origin,
+                        }
                         : null;
                 }
             case CandidateOrigin.Netease:
@@ -147,7 +175,7 @@ public sealed class LyricsService : ILyricsService
         }
     }
 
-    private async Task<LyricsResult?> FetchFromLrcLibAsync(TrackInfo track, CancellationToken cancellationToken)
+    private async Task<LyricsCandidate?> FetchFromLrcLibAsync(TrackInfo track, CancellationToken cancellationToken)
     {
         var durationSeconds = track.DurationMs > 0 ? track.DurationMs / 1000.0 : (double?)null;
         var lrcResult = await _lrcLibClient
@@ -158,16 +186,34 @@ public sealed class LyricsService : ILyricsService
 
         var synced = Normalize(lrcResult.SyncedLyrics);
         var plain = Normalize(lrcResult.PlainLyrics);
+        var origin = new CandidateOrigin.Lrclib(lrcResult.Id);
 
         if (!string.IsNullOrWhiteSpace(synced))
-            return new LyricsResult { Source = "LRCLIB", SyncedLyrics = synced, PlainLyrics = plain };
+        {
+            return new LyricsCandidate
+            {
+                Source = "LRCLIB",
+                Label = "LRCLIB",
+                SyncedLyrics = synced,
+                PlainLyrics = plain,
+                DurationMs = track.DurationMs,
+                Origin = origin,
+            };
+        }
 
         return !string.IsNullOrWhiteSpace(plain)
-            ? new LyricsResult { Source = "LRCLIB", PlainLyrics = plain }
+            ? new LyricsCandidate
+            {
+                Source = "LRCLIB",
+                Label = "LRCLIB",
+                PlainLyrics = plain,
+                DurationMs = track.DurationMs,
+                Origin = origin,
+            }
             : null;
     }
 
-    private async Task<LyricsResult?> FetchFromNetEaseAsync(TrackInfo track, CancellationToken cancellationToken)
+    private async Task<LyricsCandidate?> FetchFromNetEaseAsync(TrackInfo track, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -192,11 +238,16 @@ public sealed class LyricsService : ILyricsService
             return null;
         }
 
-        return new LyricsResult
+        var neteaseId = long.TryParse(best.Id, out var parsedId) ? parsedId : 0L;
+
+        return new LyricsCandidate
         {
             Source = "Netease",
+            Label = "Netease",
             SyncedLyrics = synced,
             PlainLyrics = plain,
+            DurationMs = track.DurationMs,
+            Origin = new CandidateOrigin.Netease(neteaseId),
         };
     }
 

@@ -32,27 +32,27 @@ public class PlaybackCoordinatorLocalMissingPromptTests
 
     private sealed class FakeLyricsService : ILyricsService
     {
-        public Dictionary<string, LyricsResult?> Responses { get; } = new();
+        public Dictionary<string, LyricsCandidate?> Responses { get; } = new();
         public IReadOnlyList<string> AvailableSources => new[] { "LRCLIB", "Local" };
         public int CallCount { get; private set; }
         public TrackInfo? LastTrack { get; private set; }
 
-        public Task<LyricsResult?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
+        public Task<LyricsCandidate?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
         {
             CallCount++;
             LastTrack = track;
-            return Task.FromResult<LyricsResult?>(null);
+            return Task.FromResult<LyricsCandidate?>(null);
         }
 
-        public Task<LyricsResult?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
+        public Task<LyricsCandidate?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
         {
             CallCount++;
             LastTrack = track;
             return Task.FromResult(Responses.TryGetValue($"{source}:{track.Id}", out var v) ? v : null);
         }
 
-        public Task<LyricsResult?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
-            => Task.FromResult<LyricsResult?>(null);
+        public Task<LyricsCandidate?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
+            => Task.FromResult<LyricsCandidate?>(null);
     }
 
     private static TrackInfo Track(string id) => new()
@@ -177,7 +177,7 @@ public class PlaybackCoordinatorLocalMissingPromptTests
         var registry = new PlaybackSourceRegistry();
         var behavior = NewBehavior(true);
         var coordinator = Build(lyrics, registry, behavior);
-        lyrics.Responses["Local:t1"] = new LyricsResult { Source = "Local", PlainLyrics = "x" };
+        lyrics.Responses["Local:t1"] = new LyricsCandidate { Source = "Local", Label = "Local", PlainLyrics = "x", DurationMs = 1000, Origin = new CandidateOrigin.Local("dummy.lrc") };
         var raised = 0;
         coordinator.LocalLyricsMissing += _ => raised++;
 

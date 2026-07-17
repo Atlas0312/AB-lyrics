@@ -50,12 +50,12 @@ public class PlaybackCoordinatorActiveSourceTests
     private sealed class FakeLyricsService : ILyricsService
     {
         public IReadOnlyList<string> AvailableSources => new[] { "LRCLIB" };
-        public Task<LyricsResult?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
-            => Task.FromResult<LyricsResult?>(null);
-        public Task<LyricsResult?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
-            => Task.FromResult<LyricsResult?>(null);
-        public Task<LyricsResult?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
-            => Task.FromResult<LyricsResult?>(null);
+        public Task<LyricsCandidate?> FetchLyricsAsync(TrackInfo track, CancellationToken ct = default)
+            => Task.FromResult<LyricsCandidate?>(null);
+        public Task<LyricsCandidate?> FetchFromSourceAsync(TrackInfo track, string source, CancellationToken ct = default)
+            => Task.FromResult<LyricsCandidate?>(null);
+        public Task<LyricsCandidate?> FetchCandidateAsync(TrackInfo track, CandidateOrigin origin, CancellationToken ct = default)
+            => Task.FromResult<LyricsCandidate?>(null);
     }
 
     private static PlaybackCoordinator BuildCoordinator(PlaybackSourceRegistry registry, string initialId)

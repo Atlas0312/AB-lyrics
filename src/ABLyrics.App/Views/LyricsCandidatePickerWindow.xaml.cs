@@ -245,7 +245,7 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
     /// <summary>
     /// 候选行上的「✕」覆盖项清除按钮。移除 override 并刷新本行 IsOverride 标记。
     /// </summary>
-    private void OnClearOverrideClick(object sender, RoutedEventArgs e)
+    private async void OnClearOverrideClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not CandidateRow row) return;
         if (_currentOverrideKey is null) return;
@@ -253,6 +253,10 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
         row.IsOverride = false;
         _currentOverrideKey = null;
         UpdateSelectionSummary();
+
+        // 关键：清除覆盖项后必须通知协调器重载当前曲目，否则主窗口/Overlay
+        // 还会显示被清除的 override 内容，直到下次切歌才会重新加载。
+        await _coordinator.ReloadWithoutOverrideAsync();
     }
 
     private IList<CandidateRow> GetSelectedRows()

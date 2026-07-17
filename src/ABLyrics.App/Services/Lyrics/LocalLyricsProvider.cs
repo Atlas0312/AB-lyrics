@@ -26,22 +26,25 @@ internal sealed class LocalLyricsProvider
 
     public string LibraryPath => _libraryPath;
 
-    public Task<LyricsResult?> GetAsync(TrackInfo track, CancellationToken cancellationToken = default)
+    public Task<LyricsCandidate?> GetAsync(TrackInfo track, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         var file = FindFile(track);
         if (file is null)
         {
-            return Task.FromResult<LyricsResult?>(null);
+            return Task.FromResult<LyricsCandidate?>(null);
         }
 
         var content = File.ReadAllText(file);
-        return Task.FromResult<LyricsResult?>(new LyricsResult
+        return Task.FromResult<LyricsCandidate?>(new LyricsCandidate
         {
             Source = "Local",
+            Label = Path.GetFileNameWithoutExtension(file),
             SyncedLyrics = content,
             PlainLyrics = content,
+            DurationMs = track.DurationMs,
+            Origin = new CandidateOrigin.Local(file),
         });
     }
 

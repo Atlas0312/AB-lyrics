@@ -181,6 +181,9 @@ internal sealed class LrcLibSearchItem
 
 internal sealed class LrcLibLyricsResponse
 {
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
     [JsonPropertyName("syncedLyrics")]
     public string? SyncedLyrics { get; set; }
 

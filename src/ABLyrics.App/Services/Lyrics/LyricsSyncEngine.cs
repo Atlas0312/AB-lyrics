@@ -15,28 +15,41 @@ public sealed class LyricsSyncEngine
         _durationMs = durationMs;
     }
 
+    /// <summary>
+    /// 清空引擎内已加载的同步/纯文本歌词，避免切歌或停播后旧帧被读出。
+    /// </summary>
+    public void Clear()
+    {
+        _lyricsData = null;
+        _plainLines = [];
+    }
+
+    /// <summary>
+    /// 兼容入口：解析 <see cref="LyricsResult"/> 后委托到 <see cref="LoadParsed"/>。
+    /// <paramref name="lyrics"/> 为 null 时等同 <see cref="Clear"/>。
+    /// 主路径请优先使用已解析的 <see cref="LoadParsed"/>。
+    /// </summary>
     public void Load(LyricsResult? lyrics)
     {
         if (lyrics is null)
         {
-            _lyricsData = null;
-            _plainLines = [];
+            Clear();
             return;
         }
 
         if (!string.IsNullOrWhiteSpace(lyrics.SyncedLyrics))
         {
-            _lyricsData = LrcParser.Parse(lyrics.SyncedLyrics);
-            if (_lyricsData?.Lines is { Count: > 0 })
+            var data = LrcParser.Parse(lyrics.SyncedLyrics);
+            if (data?.Lines is { Count: > 0 })
             {
-                _plainLines = [];
+                LoadParsed(data, []);
                 return;
             }
         }
 
-        _lyricsData = null;
-        _plainLines = (lyrics.PlainLyrics ?? string.Empty)
+        var plain = (lyrics.PlainLyrics ?? string.Empty)
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        LoadParsed(null, plain);
     }
 
     /// <summary>
