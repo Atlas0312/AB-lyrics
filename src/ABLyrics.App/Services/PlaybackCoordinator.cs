@@ -143,6 +143,166 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     public bool IsPlaying => _isPlaying;
     public IReadOnlyList<string> AvailableSources => _lyricsService.AvailableSources;
     public string? GetCurrentTrackId() => _loadedTrackId;
+
+    /// <summary>当前正在使用的歌词候选（含原始 Synced/Plain 文本）。调试导出用。</summary>
+    public LyricsCandidate? CurrentLyricsCandidate => _overrideCandidate;
+
+    /// <summary>
+    /// DEBUG：导出同步排查用的完整快照（曲目 / 进度 / 偏移 / 来源链接 / 时间轴 / 原文）。
+    /// 无歌词时返回 null。
+    /// </summary>
+    public string? TryBuildLyricsDebugDump()
+    {
+        var candidate = _overrideCandidate;
+        var rawText = candidate?.SyncedLyrics ?? candidate?.PlainLyrics;
+        if (candidate is null || string.IsNullOrWhiteSpace(rawText))
+        {
+            return null;
+        }
+
+        var sb = new System.Text.StringBuilder(rawText.Length + 2048);
+        var interpolated = GetInterpolatedProgressMs();
+        var sampleAgeMs = (long)(DateTimeOffset.UtcNow - _lastSampleAt).TotalMilliseconds;
+
+        sb.AppendLine("=== ABLyrics Lyrics Sync Debug Dump ===");
+        sb.AppendLine($"ExportedAt: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz}");
+        sb.AppendLine();
+
+        sb.AppendLine("--- Track ---");
+        sb.AppendLine($"Title: {_trackTitle}");
+        sb.AppendLine($"Artist: {_artistName}");
+        sb.AppendLine($"Album: {_trackAlbum}");
+        sb.AppendLine($"TrackId: {_loadedTrackId ?? "(null)"}");
+        sb.AppendLine($"DurationMs: {_trackDurationMs} ({FormatClock(_trackDurationMs)})");
+        if (!string.IsNullOrWhiteSpace(_loadedTrackId))
+        {
+            sb.AppendLine($"PlaybackLink: https://open.spotify.com/track/{_loadedTrackId}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("--- Sync State (why may be off) ---");
+        sb.AppendLine($"IsPlaying: {_isPlaying}");
+        sb.AppendLine($"SyncOffsetMs: {_syncOffsetMs}");
+        sb.AppendLine($"LastPollProgressMs: {_lastProgressMs} ({FormatClock(_lastProgressMs)})");
+        sb.AppendLine($"SampleAgeMs: {sampleAgeMs}");
+        sb.AppendLine($"InterpolatedProgressMs (= poll + clamp(age) - SyncOffset): {interpolated} ({FormatClock(interpolated)})");
+        sb.AppendLine($"DisplayedPrevious: {_previousLine}");
+        sb.AppendLine($"DisplayedCurrent: {_currentLine}");
+        sb.AppendLine($"DisplayedNext: {_nextLine}");
+
+        sb.AppendLine();
+        sb.AppendLine("--- Lyrics Source ---");
+        sb.AppendLine($"UiLyricsSource: {_lyricsSource}");
+        sb.AppendLine($"CandidateSource: {candidate.Source}");
+        sb.AppendLine($"CandidateLabel: {candidate.Label}");
+        sb.AppendLine($"CandidateDurationMs: {candidate.DurationMs}");
+        sb.AppendLine($"HasSyncedLyrics: {!string.IsNullOrWhiteSpace(candidate.SyncedLyrics)}");
+        sb.AppendLine($"HasPlainLyrics: {!string.IsNullOrWhiteSpace(candidate.PlainLyrics)}");
+        AppendOriginDebug(sb, candidate.Origin, _trackTitle, _artistName);
+
+        if (!string.IsNullOrWhiteSpace(candidate.SyncedLyrics))
+        {
+            var data = LrcParser.Parse(candidate.SyncedLyrics);
+            sb.AppendLine();
+            sb.AppendLine("--- Parsed Timeline (engine input) ---");
+            sb.AppendLine("# index\tstartMs\tlrcTag\ttext");
+            if (data?.Lines is { Count: > 0 } lines)
+            {
+                var activeIndex = -1;
+                for (var i = 0; i < lines.Count; i++)
+                {
+                    var start = lines[i].StartTime ?? 0;
+                    if (start <= interpolated)
+                    {
+                        activeIndex = i;
+                    }
+
+                    var tag = FormatLrcTag(start);
+                    var text = (lines[i].Text ?? string.Empty).Replace('\t', ' ');
+                    var marker = i == activeIndex ? " <== current @ interpolated" : string.Empty;
+                    sb.AppendLine($"{i}\t{start}\t{tag}\t{text}{marker}");
+                }
+
+                if (activeIndex < 0 && lines.Count > 0)
+                {
+                    sb.AppendLine($"# note: interpolated ({interpolated}ms) is before first line ({lines[0].StartTime ?? 0}ms)");
+                }
+            }
+            else
+            {
+                sb.AppendLine("# (parser produced no timed lines)");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("--- Synced Lyrics (raw) ---");
+            sb.AppendLine(candidate.SyncedLyrics.TrimEnd());
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.PlainLyrics))
+        {
+            sb.AppendLine();
+            sb.AppendLine("--- Plain Lyrics (raw) ---");
+            sb.AppendLine(candidate.PlainLyrics.TrimEnd());
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("=== End ===");
+        return sb.ToString();
+    }
+
+    private static void AppendOriginDebug(
+        System.Text.StringBuilder sb,
+        CandidateOrigin origin,
+        string title,
+        string artist)
+    {
+        switch (origin)
+        {
+            case CandidateOrigin.Local local:
+                sb.AppendLine("OriginKind: Local");
+                sb.AppendLine($"OriginFilePath: {local.FilePath}");
+                sb.AppendLine($"OriginLink: file:///{local.FilePath.Replace('\\', '/')}");
+                break;
+            case CandidateOrigin.Lrclib lrclib:
+                sb.AppendLine("OriginKind: LRCLIB");
+                sb.AppendLine($"OriginId: {lrclib.LrclibId}");
+                sb.AppendLine($"OriginApiLink: https://lrclib.net/api/get/{lrclib.LrclibId}");
+                var lrclibQuery = string.Join(' ', new[] { artist, title }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                if (!string.IsNullOrWhiteSpace(lrclibQuery))
+                {
+                    sb.AppendLine($"OriginSearchLink: https://lrclib.net/?q={Uri.EscapeDataString(lrclibQuery)}");
+                }
+                break;
+            case CandidateOrigin.Netease netease:
+                sb.AppendLine("OriginKind: Netease");
+                sb.AppendLine($"OriginId: {netease.NeteaseSongId}");
+                sb.AppendLine($"OriginLink: https://music.163.com/#/song?id={netease.NeteaseSongId}");
+                break;
+            default:
+                sb.AppendLine($"OriginKind: {origin.GetType().Name}");
+                sb.AppendLine($"Origin: {origin}");
+                break;
+        }
+    }
+
+    private static string FormatClock(long ms)
+    {
+        if (ms < 0) ms = 0;
+        var totalSeconds = ms / 1000.0;
+        var m = (int)(totalSeconds / 60);
+        var s = totalSeconds - m * 60;
+        return $"{m:00}:{s:00.000}";
+    }
+
+    private static string FormatLrcTag(int ms)
+    {
+        if (ms < 0) ms = 0;
+        var m = ms / 60000;
+        var s = (ms % 60000) / 1000;
+        var cs = (ms % 1000) / 10;
+        return $"[{m:00}:{s:00}.{cs:00}]";
+    }
+
     public event Action? LoadingFlash;
     public event Action<bool>? IsPlayingChanged;
     public event Action? SourceStateChanged;

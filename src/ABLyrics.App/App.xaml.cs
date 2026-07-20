@@ -1,3 +1,5 @@
+using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using ABLyrics.App.Configuration;
@@ -183,6 +185,16 @@ public partial class App : System.Windows.Application
         var settingsItem = new Forms.ToolStripMenuItem("设置…");
         settingsItem.Click += (_, _) => OnStyleSettingsClick();
         menu.Items.Add(settingsItem);
+
+        // 临时调试入口：导出当前正在使用的歌词原文（仅 DEBUG）。
+        if (DevExceptionReporter.IsEnabled)
+        {
+            menu.Items.Add(new Forms.ToolStripSeparator());
+            var exportItem = new Forms.ToolStripMenuItem("导出歌词调试信息…");
+            exportItem.Click += (_, _) => Dispatcher.BeginInvoke(ExportCurrentLyrics);
+            menu.Items.Add(exportItem);
+        }
+
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         var exitItem = new Forms.ToolStripMenuItem("退出");
@@ -302,6 +314,62 @@ public partial class App : System.Windows.Application
             {
                 System.Windows.MessageBox.Show(ex.Message, "样式设置", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
             }
+        }
+    }
+
+    /// <summary>
+    /// DEBUG 临时功能：导出同步排查快照（进度/偏移/来源链接/时间轴/原文）。
+    /// </summary>
+    private void ExportCurrentLyrics()
+    {
+        var dump = Coordinator.TryBuildLyricsDebugDump();
+        if (string.IsNullOrWhiteSpace(dump))
+        {
+            System.Windows.MessageBox.Show(
+                "当前没有可导出的歌词。",
+                "导出歌词调试信息",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        var track = new TrackInfo
+        {
+            Id = Coordinator.GetCurrentTrackId() ?? string.Empty,
+            Name = Coordinator.TrackTitle,
+            Artist = Coordinator.ArtistName,
+            Album = Coordinator.TrackAlbum,
+            DurationMs = 0,
+        };
+        var stem = string.IsNullOrWhiteSpace(track.Name)
+            ? "lyrics-debug"
+            : Path.GetFileNameWithoutExtension(LocalLyricsProvider.BuildFileNamePublic(track));
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "导出歌词调试信息",
+            Filter = "调试报告 (*.txt)|*.txt|所有文件 (*.*)|*.*",
+            FilterIndex = 1,
+            FileName = $"{stem}.sync-debug.{stamp}.txt",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            OverwritePrompt = true,
+        };
+
+        if (dialog.ShowDialog() != true) return;
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, dump, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+        catch (Exception ex)
+        {
+            DevExceptionReporter.Show(ex, "导出歌词调试信息失败");
+            System.Windows.MessageBox.Show(
+                ex.Message,
+                "导出歌词调试信息",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
         }
     }
 
