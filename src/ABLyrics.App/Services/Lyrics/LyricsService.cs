@@ -132,13 +132,10 @@ public sealed class LyricsService : ILyricsService
                         Origin = origin,
                     };
                 }
-            case CandidateOrigin.Lrclib:
+            case CandidateOrigin.Lrclib lrclibOrigin:
                 {
-                    var durationSeconds = track.DurationMs > 0
-                        ? track.DurationMs / 1000.0
-                        : (double?)null;
                     var resp = await _lrcLibClient
-                        .GetAsync(track.Name, track.Artist, track.Album, durationSeconds, cancellationToken)
+                        .GetByIdAsync(lrclibOrigin.LrclibId, cancellationToken)
                         .ConfigureAwait(false);
                     if (resp is null) return null;
 

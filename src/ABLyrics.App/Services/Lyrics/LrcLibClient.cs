@@ -59,6 +59,27 @@ internal sealed class LrcLibClient
     }
 
     /// <summary>
+    /// 按 LRCLIB 绝对 id 拉取：<c>GET /api/get/{id}</c>。
+    /// 覆盖项恢复必须走这条路径，不能用元数据精确匹配（同曲多条目时会拿到错误版本）。
+    /// </summary>
+    public async Task<LrcLibLyricsResponse?> GetByIdAsync(
+        int lrclibId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient
+            .GetAsync($"get/{lrclibId}", cancellationToken)
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        return await JsonSerializer.DeserializeAsync<LrcLibLyricsResponse>(stream, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 多候选搜索：调 LRCLIB <c>/api/search</c>，把返回的 JSON 数组解析成
     /// <see cref="LrcLibSearchHit"/> 列表。duration 是秒（float），统一换算为 ms。
     /// 任何错误（网络/非 2xx/JSON 损坏）一律返回空列表，让上层调用者自行兜底。

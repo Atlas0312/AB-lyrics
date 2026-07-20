@@ -32,6 +32,8 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     {
         private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new();
 
+        public Uri? LastRequestUri { get; private set; }
+
         public void Enqueue(HttpStatusCode status, string body)
         {
             _responses.Enqueue(_ => new HttpResponseMessage(status)
@@ -44,6 +46,7 @@ public class LyricsServiceFetchCandidateTests : IDisposable
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            LastRequestUri = request.RequestUri;
             if (_responses.Count == 0)
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
@@ -130,7 +133,7 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
-            { "syncedLyrics": "[00:01.00] synced", "plainLyrics": "synced" }
+            { "id": 123, "syncedLyrics": "[00:01.00] synced", "plainLyrics": "synced" }
             """);
         var service = NewService(BuildLrcLibClient(handler));
 
@@ -143,6 +146,9 @@ public class LyricsServiceFetchCandidateTests : IDisposable
         Assert.Equal("synced", result.PlainLyrics);
         Assert.IsType<CandidateOrigin.Lrclib>(result.Origin);
         Assert.Equal(123, ((CandidateOrigin.Lrclib)result.Origin).LrclibId);
+        Assert.NotNull(handler.LastRequestUri);
+        Assert.Contains("/get/123", handler.LastRequestUri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.DoesNotContain("track_name=", handler.LastRequestUri.Query, StringComparison.Ordinal);
     }
 
     [Fact]
