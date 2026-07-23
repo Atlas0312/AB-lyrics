@@ -152,7 +152,7 @@ public class LyricsServiceFetchCandidateTests : IDisposable
     }
 
     [Fact]
-    public async Task FetchCandidateAsync_LrclibHitPlainOnly_ReturnsPlain()
+    public async Task FetchCandidateAsync_LrclibHitPlainOnly_ReturnsNull()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, """
@@ -163,10 +163,7 @@ public class LyricsServiceFetchCandidateTests : IDisposable
         var result = await service
             .FetchCandidateAsync(Track(), new CandidateOrigin.Lrclib(1), CancellationToken.None);
 
-        Assert.NotNull(result);
-        Assert.Equal("LRCLIB", result!.Source);
-        Assert.Null(result.SyncedLyrics);
-        Assert.Equal("plain only", result.PlainLyrics);
+        Assert.Null(result);
     }
 
     [Fact]

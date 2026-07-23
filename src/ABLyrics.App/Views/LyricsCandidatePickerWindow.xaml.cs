@@ -204,6 +204,7 @@ public partial class LyricsCandidatePickerWindow : Wpf.Ui.Controls.FluentWindow
         }
         _suppressSelectionChanged = false;
 
+
         StatusText.Text = _candidates.Count == 0
             ? $"{library}：无候选"
             : $"{library}：{_candidates.Count} 个候选";

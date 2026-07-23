@@ -43,6 +43,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     private long _lastProgressMs;
     private DateTimeOffset _lastSampleAt = DateTimeOffset.UtcNow;
     private bool _isPlaying;
+    private int _pollInFlight;
+    private DateTimeOffset _rateLimitedUntil = DateTimeOffset.MinValue;
 
     private int _syncOffsetMs = 150;
 
@@ -304,6 +306,8 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
     }
 
     public event Action? LoadingFlash;
+    /// <summary>与 <see cref="LoadingFlash"/> 成对：加载链路结束后触发，供 UI 结束闪烁。</summary>
+    public event Action? LoadingFlashCompleted;
     public event Action<bool>? IsPlayingChanged;
     public event Action? SourceStateChanged;
     public event Action<TrackInfo>? LocalLyricsMissing;
@@ -448,6 +452,9 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
             _timer.Start();
             StatusText = "正在监听播放…";
         }
+
+        // 立即拉一次，避免首屏空等一个 Poll 周期。
+        _ = PollAsync();
     }
 
     public void Stop()
@@ -552,30 +559,42 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
         var track = SnapshotCurrentTrack();
 
+        var flashed = false;
         if (request.FlashOnLoading && ShouldFlashFor(request))
         {
             StatusText = BuildLoadingMessage(request);
             LoadingFlash?.Invoke();
+            flashed = true;
         }
 
-        var candidate = await ResolveCandidateAsync(track, request).ConfigureAwait(false);
-
-        ApplyCandidateToEngine(candidate, track.DurationMs);
-        _overrideCandidate = candidate;
-        LyricsSource = ResolveLyricsSource(candidate, request);
-        StatusText = ResolveFinalStatusText(candidate, request);
-
-        if (request.PromptLocalMissing
-            && request.Source == LyricsLoadSource.ExplicitSource
-            && request.ExplicitSourceName == "Local"
-            && candidate is null)
+        try
         {
-            TriggerLocalMissingPrompt(track);
+            var candidate = await ResolveCandidateAsync(track, request).ConfigureAwait(false);
+
+            ApplyCandidateToEngine(candidate, track.DurationMs);
+            _overrideCandidate = candidate;
+            LyricsSource = ResolveLyricsSource(candidate, request);
+            StatusText = ResolveFinalStatusText(candidate, request);
+
+            if (request.PromptLocalMissing
+                && request.Source == LyricsLoadSource.ExplicitSource
+                && request.ExplicitSourceName == "Local"
+                && candidate is null)
+            {
+                TriggerLocalMissingPrompt(track);
+            }
+
+            if (request.FlushFrameImmediately)
+            {
+                UpdateLyricFrame(GetInterpolatedProgressMs());
+            }
         }
-
-        if (request.FlushFrameImmediately)
+        finally
         {
-            UpdateLyricFrame(GetInterpolatedProgressMs());
+            if (flashed)
+            {
+                LoadingFlashCompleted?.Invoke();
+            }
         }
     }
 
@@ -708,8 +727,19 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
     private async Task PollAsync()
     {
+        // 禁止重叠轮询：429 退避期间若继续开新请求会把 Spotify 限流打成死循环。
+        if (Interlocked.CompareExchange(ref _pollInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
         try
         {
+            if (DateTimeOffset.UtcNow < _rateLimitedUntil)
+            {
+                return;
+            }
+
             if (_activePlaybackSource is null || !_activePlaybackSource.IsConnected)
             {
                 Stop();
@@ -719,43 +749,56 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(false);
-        if (playback is null)
-        {
-            var wasPlaying = _isPlaying;
-            _isPlaying = false;
-            if (wasPlaying != _isPlaying)
+            var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(false);
+            if (playback is null)
+            {
+                var wasPlaying = _isPlaying;
+                _isPlaying = false;
+                if (wasPlaying != _isPlaying)
+                {
+                    IsPlayingChanged?.Invoke(_isPlaying);
+                }
+                ClearLyrics();
+                TrackTitle = string.Empty;
+                ArtistName = string.Empty;
+                StatusText = "未在播放";
+                return;
+            }
+
+            TrackTitle = playback.Track.Name;
+            ArtistName = playback.Track.Artist;
+            var wasPlaying2 = _isPlaying;
+            _isPlaying = playback.IsPlaying;
+            if (wasPlaying2 != _isPlaying)
             {
                 IsPlayingChanged?.Invoke(_isPlaying);
             }
-            ClearLyrics();
-            TrackTitle = string.Empty;
-            ArtistName = string.Empty;
-            StatusText = "未在播放";
-            return;
-        }
+            _lastProgressMs = playback.ProgressMs;
+            _lastSampleAt = DateTimeOffset.UtcNow;
 
-        TrackTitle = playback.Track.Name;
-        ArtistName = playback.Track.Artist;
-        var wasPlaying2 = _isPlaying;
-        _isPlaying = playback.IsPlaying;
-        if (wasPlaying2 != _isPlaying)
-        {
-            IsPlayingChanged?.Invoke(_isPlaying);
-        }
-        _lastProgressMs = playback.ProgressMs;
-        _lastSampleAt = DateTimeOffset.UtcNow;
+            if (_loadedTrackId != playback.Track.Id)
+            {
+                await LoadTrackAsync(playback.Track).ConfigureAwait(false);
+            }
 
-        if (_loadedTrackId != playback.Track.Id)
-        {
-            await LoadTrackAsync(playback.Track).ConfigureAwait(false);
-        }
-
-        UpdateLyricFrame(GetInterpolatedProgressMs());
+            UpdateLyricFrame(GetInterpolatedProgressMs());
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;
+            if (ex.Message.Contains("429", StringComparison.Ordinal))
+            {
+                // 限流后冷却 60s，避免继续打 currently-playing。
+                _rateLimitedUntil = DateTimeOffset.UtcNow.AddSeconds(60);
+                StatusText = "Spotify 限流中，60 秒后重试";
+            }
+            else
+            {
+                StatusText = ex.Message;
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _pollInFlight, 0);
         }
     }
 
@@ -861,14 +904,9 @@ var playback = await _activePlaybackSource.GetSnapshotAsync().ConfigureAwait(fal
                     ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             _syncEngine.LoadParsed(data, plain);
         }
-        else if (!string.IsNullOrWhiteSpace(candidate.PlainLyrics))
-        {
-            var plain = candidate.PlainLyrics.Split(
-                ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            _syncEngine.LoadParsed(null, plain);
-        }
         else
         {
+            // plain-only / 空歌词：不同步，不加载到引擎。
             _syncEngine.Clear();
         }
     }

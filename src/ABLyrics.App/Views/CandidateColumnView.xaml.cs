@@ -67,12 +67,17 @@ public partial class CandidateColumnView : System.Windows.Controls.UserControl
         _candidate = candidate;
         HeaderText.Text = $"{candidate.Source} · {candidate.Label}";
         _engine.SetDurationMs(candidate.DurationMs);
-        if (!string.IsNullOrWhiteSpace(candidate.SyncedLyrics))
+        var hasSynced = !string.IsNullOrWhiteSpace(candidate.SyncedLyrics);
+        var hasPlain = !string.IsNullOrWhiteSpace(candidate.PlainLyrics);
+        if (hasSynced)
         {
             var data = LrcParser.Parse(candidate.SyncedLyrics);
             var plain = (candidate.PlainLyrics ?? string.Empty)
                 .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             _engine.LoadParsed(data, plain);
+        }
+        else
+        {
         }
     }
 

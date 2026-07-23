@@ -16,7 +16,7 @@ internal sealed record LyricsLoadRequest
     /// <summary>加载失败时的兜底策略。</summary>
     public LyricsLoadFailurePolicy FailurePolicy { get; init; } = LyricsLoadFailurePolicy.None;
 
-    /// <summary>是否触发 LoadingFlash 与"正在尝试 X…"状态文本。Local 源默认 false。</summary>
+    /// <summary>是否触发 LoadingFlash（加载结束时配对 LoadingFlashCompleted）与"正在尝试 X…"状态文本。Local 源默认 false。</summary>
     public bool FlashOnLoading { get; init; } = true;
 
     /// <summary>取不到时是否触发 Local 缺失提示。</summary>

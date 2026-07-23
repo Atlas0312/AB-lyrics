@@ -135,11 +135,11 @@ public class LyricsSearchServiceTests : IDisposable
         handler.Enqueue(HttpStatusCode.OK, """
             [
               { "id": 1, "trackName": "Song", "artistName": "Artist", "albumName": "Album",
-                "duration": 60.0,  "syncedLyrics": null, "plainLyrics": null },
+                "duration": 60.0,  "syncedLyrics": "[00:01.00] a", "plainLyrics": "a" },
               { "id": 2, "trackName": "Song", "artistName": "Artist", "albumName": "Album",
-                "duration": 180.0, "syncedLyrics": null, "plainLyrics": null },
+                "duration": 180.0, "syncedLyrics": "[00:01.00] b", "plainLyrics": "b" },
               { "id": 3, "trackName": "Song", "artistName": "Artist", "albumName": "Album",
-                "duration": 300.0, "syncedLyrics": null, "plainLyrics": null }
+                "duration": 300.0, "syncedLyrics": "[00:01.00] c", "plainLyrics": "c" }
             ]
             """);
         var lrcLib = BuildLrcLibClient(handler);
@@ -152,6 +152,28 @@ public class LyricsSearchServiceTests : IDisposable
         Assert.Equal(2, candidates[0].Origin.GetType().GetProperty("LrclibId")!.GetValue(candidates[0].Origin));
         Assert.Equal(1, candidates[1].Origin.GetType().GetProperty("LrclibId")!.GetValue(candidates[1].Origin));
         Assert.Equal(3, candidates[2].Origin.GetType().GetProperty("LrclibId")!.GetValue(candidates[2].Origin));
+    }
+
+    [Fact]
+    public async Task SearchAsync_LrclibLibrary_FiltersOutPlainOnly()
+    {
+        var handler = new StubHandler();
+        handler.Enqueue(HttpStatusCode.OK, """
+            [
+              { "id": 1, "trackName": "Song", "artistName": "Artist", "albumName": "A",
+                "duration": 180.0, "syncedLyrics": null, "plainLyrics": "plain only" },
+              { "id": 2, "trackName": "Song", "artistName": "Artist", "albumName": "B",
+                "duration": 181.0, "syncedLyrics": "[00:01.00] synced", "plainLyrics": "synced" }
+            ]
+            """);
+        var lrcLib = BuildLrcLibClient(handler);
+        var service = NewServiceWithLocalDir(lrcLib);
+
+        var candidates = await service.SearchAsync(Track(durationMs: 180_000), "LRCLIB", CancellationToken.None);
+
+        var c = Assert.Single(candidates);
+        Assert.Equal(2, Assert.IsType<CandidateOrigin.Lrclib>(c.Origin).LrclibId);
+        Assert.Equal("[00:01.00] synced", c.SyncedLyrics);
     }
 
     [Fact]
@@ -186,7 +208,7 @@ public class LyricsSearchServiceTests : IDisposable
         handler.Enqueue(HttpStatusCode.OK, """
             [
               { "id": 9, "trackName": "Song", "artistName": "Artist", "albumName": "",
-                "duration": 65.0, "syncedLyrics": null, "plainLyrics": null }
+                "duration": 65.0, "syncedLyrics": "[00:01.00] x", "plainLyrics": "x" }
             ]
             """);
         var lrcLib = BuildLrcLibClient(handler);

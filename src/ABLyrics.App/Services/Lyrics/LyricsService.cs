@@ -39,54 +39,25 @@ public sealed class LyricsService : ILyricsService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        // FetchFromLrcLibAsync 已丢弃 plain-only；命中即带 SyncedLyrics。
         var lrcLibResult = await FetchFromLrcLibAsync(track, cancellationToken).ConfigureAwait(false);
-
         if (lrcLibResult is not null)
         {
-            if (!string.IsNullOrWhiteSpace(lrcLibResult.SyncedLyrics))
-            {
-                return lrcLibResult;
-            }
-
-            // LRCLIB returned only plain lyrics
-            if (!string.IsNullOrWhiteSpace(_netEaseSettings.MusicU))
-            {
-                var netease = await FetchFromNetEaseAsync(track, cancellationToken).ConfigureAwait(false);
-                if (netease is not null && !string.IsNullOrWhiteSpace(netease.SyncedLyrics))
-                {
-                    return new LyricsCandidate
-                    {
-                        Source = netease.Source,
-                        Label = netease.Label,
-                        SyncedLyrics = netease.SyncedLyrics,
-                        PlainLyrics = lrcLibResult.PlainLyrics,
-                        DurationMs = netease.DurationMs,
-                        Origin = netease.Origin,
-                    };
-                }
-            }
-
-            // Prefer Local synced over LRCLIB plain-only when available.
-            var localOverPlain = await _localProvider.GetAsync(track, cancellationToken).ConfigureAwait(false);
-            if (localOverPlain is not null && !string.IsNullOrWhiteSpace(localOverPlain.SyncedLyrics))
-            {
-                return localOverPlain;
-            }
-
             return lrcLibResult;
         }
 
-        // LRCLIB miss → Netease (if configured) → Local
+        // LRCLIB miss（含仅有 plain）→ Netease（若已配置）→ Local
         if (!string.IsNullOrWhiteSpace(_netEaseSettings.MusicU))
         {
             var netease = await FetchFromNetEaseAsync(track, cancellationToken).ConfigureAwait(false);
-            if (netease is not null)
+            if (netease is not null && !string.IsNullOrWhiteSpace(netease.SyncedLyrics))
             {
                 return netease;
             }
         }
 
-        return await _localProvider.GetAsync(track, cancellationToken).ConfigureAwait(false);
+        var local = await _localProvider.GetAsync(track, cancellationToken).ConfigureAwait(false);
+        return local is not null && !string.IsNullOrWhiteSpace(local.SyncedLyrics) ? local : null;
     }
 
     public async Task<LyricsCandidate?> FetchFromSourceAsync(TrackInfo track, string sourceName, CancellationToken cancellationToken = default)
@@ -141,28 +112,20 @@ public sealed class LyricsService : ILyricsService
 
                     var synced = Normalize(resp.SyncedLyrics);
                     var plain = Normalize(resp.PlainLyrics);
-                    if (!string.IsNullOrWhiteSpace(synced))
+                    if (string.IsNullOrWhiteSpace(synced))
                     {
-                        return new LyricsCandidate
-                        {
-                            Source = "LRCLIB",
-                            Label = "LRCLIB",
-                            SyncedLyrics = synced,
-                            PlainLyrics = plain,
-                            DurationMs = track.DurationMs,
-                            Origin = origin,
-                        };
+                        return null;
                     }
-                    return !string.IsNullOrWhiteSpace(plain)
-                        ? new LyricsCandidate
-                        {
-                            Source = "LRCLIB",
-                            Label = "LRCLIB",
-                            PlainLyrics = plain,
-                            DurationMs = track.DurationMs,
-                            Origin = origin,
-                        }
-                        : null;
+
+                    return new LyricsCandidate
+                    {
+                        Source = "LRCLIB",
+                        Label = "LRCLIB",
+                        SyncedLyrics = synced,
+                        PlainLyrics = plain,
+                        DurationMs = track.DurationMs,
+                        Origin = origin,
+                    };
                 }
             case CandidateOrigin.Netease:
                 // 本期 Netease 不作为覆盖项的常见来源：覆盖项恢复路径不实现。
@@ -179,35 +142,55 @@ public sealed class LyricsService : ILyricsService
             .GetAsync(track.Name, track.Artist, track.Album, durationSeconds, cancellationToken)
             .ConfigureAwait(false);
 
-        if (lrcResult is null) return null;
-
-        var synced = Normalize(lrcResult.SyncedLyrics);
-        var plain = Normalize(lrcResult.PlainLyrics);
-        var origin = new CandidateOrigin.Lrclib(lrcResult.Id);
-
-        if (!string.IsNullOrWhiteSpace(synced))
+        if (lrcResult is not null)
         {
-            return new LyricsCandidate
+            var synced = Normalize(lrcResult.SyncedLyrics);
+            var plain = Normalize(lrcResult.PlainLyrics);
+            if (!string.IsNullOrWhiteSpace(synced))
             {
-                Source = "LRCLIB",
-                Label = "LRCLIB",
-                SyncedLyrics = synced,
-                PlainLyrics = plain,
-                DurationMs = track.DurationMs,
-                Origin = origin,
-            };
+                return new LyricsCandidate
+                {
+                    Source = "LRCLIB",
+                    Label = "LRCLIB",
+                    SyncedLyrics = synced,
+                    PlainLyrics = plain,
+                    DurationMs = track.DurationMs,
+                    Origin = new CandidateOrigin.Lrclib(lrcResult.Id),
+                };
+            }
+
         }
 
-        return !string.IsNullOrWhiteSpace(plain)
-            ? new LyricsCandidate
-            {
-                Source = "LRCLIB",
-                Label = "LRCLIB",
-                PlainLyrics = plain,
-                DurationMs = track.DurationMs,
-                Origin = origin,
-            }
-            : null;
+        // 精确 get 未命中 synced（404 / plain-only）：改走官网同款 q= 搜索，按时长取最近 synced。
+        var hits = await _lrcLibClient
+            .SearchAsync(track.Name, track.Artist, track.Album, cancellationToken)
+            .ConfigureAwait(false);
+        var best = hits
+            .Where(h => !string.IsNullOrWhiteSpace(h.SyncedLyrics))
+            .OrderBy(h => Math.Abs(h.DurationMs - track.DurationMs))
+            .FirstOrDefault();
+
+
+        if (best is null)
+        {
+            return null;
+        }
+
+        var bestSynced = Normalize(best.SyncedLyrics);
+        if (string.IsNullOrWhiteSpace(bestSynced))
+        {
+            return null;
+        }
+
+        return new LyricsCandidate
+        {
+            Source = "LRCLIB",
+            Label = "LRCLIB",
+            SyncedLyrics = bestSynced,
+            PlainLyrics = Normalize(best.PlainLyrics),
+            DurationMs = track.DurationMs,
+            Origin = new CandidateOrigin.Lrclib(best.Id),
+        };
     }
 
     private async Task<LyricsCandidate?> FetchFromNetEaseAsync(TrackInfo track, CancellationToken cancellationToken)

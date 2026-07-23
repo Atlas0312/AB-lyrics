@@ -54,6 +54,10 @@ internal static class AppBarNative
     public const uint SwpNoZOrder = 0x0004;
     public const uint SwpShowWindow = 0x0040;
 
+    public const int GwlExstyle = -20;
+    public const int WsExToolWindow = 0x00000080;
+    public const int WsExAppWindow = 0x00040000;
+
     public static readonly uint CallbackMessage = RegisterWindowMessage("ABLyrics.AppBar.Callback");
 
     [DllImport("shell32.dll")]
@@ -79,4 +83,46 @@ internal static class AppBarNative
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern uint RegisterWindowMessage(string lpString);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLong", SetLastError = true)]
+    private static extern int GetWindowLong32(nint hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr", SetLastError = true)]
+    private static extern nint GetWindowLongPtr64(nint hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLong", SetLastError = true)]
+    private static extern int SetWindowLong32(nint hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr", SetLastError = true)]
+    private static extern nint SetWindowLongPtr64(nint hWnd, int nIndex, nint dwNewLong);
+
+    /// <summary>
+    /// 从 Alt+Tab / Win+Tab 任务切换器中隐藏窗口。
+    /// 仅设 ShowInTaskbar=False 对已注册的 AppBar 不够可靠。
+    /// </summary>
+    public static void HideFromTaskSwitcher(nint hwnd)
+    {
+        if (hwnd == nint.Zero)
+        {
+            return;
+        }
+
+        var exStyle = GetWindowLongPtr(hwnd, GwlExstyle);
+        exStyle = (nint)(((long)exStyle | WsExToolWindow) & ~WsExAppWindow);
+        SetWindowLongPtr(hwnd, GwlExstyle, exStyle);
+    }
+
+    private static nint GetWindowLongPtr(nint hWnd, int nIndex)
+    {
+        return nint.Size == 8
+            ? GetWindowLongPtr64(hWnd, nIndex)
+            : GetWindowLong32(hWnd, nIndex);
+    }
+
+    private static nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong)
+    {
+        return nint.Size == 8
+            ? SetWindowLongPtr64(hWnd, nIndex, dwNewLong)
+            : SetWindowLong32(hWnd, nIndex, (int)dwNewLong);
+    }
 }

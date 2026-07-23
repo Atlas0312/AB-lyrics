@@ -8,6 +8,7 @@ internal sealed class SpotifyApiClient : IDisposable
     private readonly ISpotifyAuthService _authService;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     private int _backoffSeconds = 2;
 
@@ -33,9 +34,26 @@ internal sealed class SpotifyApiClient : IDisposable
         string requestUri,
         CancellationToken cancellationToken = default)
     {
+        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await SendLockedAsync(method, requestUri, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendLockedAsync(
+        HttpMethod method,
+        string requestUri,
+        CancellationToken cancellationToken)
+    {
         // 401 时强制刷新一次再重试：服务端偶尔会比 ExpiresAt 提前作废 access_token，
         // 单靠本地时间判断的过期窗口 (AddMinutes(-1)) 可能错过这条窗口。
         var retriedAfterRefresh = false;
+        var rateLimitRetries = 0;
 
         while (true)
         {
@@ -68,14 +86,38 @@ internal sealed class SpotifyApiClient : IDisposable
                 return response;
             }
 
-            var waitSeconds = response.Headers.RetryAfter?.Delta?.TotalSeconds is double seconds
-                ? (int)Math.Ceiling(seconds)
-                : _backoffSeconds;
-            _backoffSeconds = Math.Min(60, _backoffSeconds * 2);
+            var waitSeconds = ResolveRetryAfterSeconds(response);
+            rateLimitRetries++;
+
+            // 有限次退避：无限 while+429 会在限流未解除时持续消耗 currently-playing 配额。
+            if (rateLimitRetries > 3)
+            {
+                response.Dispose();
+                throw new HttpRequestException(
+                    $"Spotify API 限流 (429)，已退避 {rateLimitRetries} 次，暂停轮询。");
+            }
+
+            _backoffSeconds = Math.Min(60, Math.Max(_backoffSeconds * 2, waitSeconds));
             response.Dispose();
 
             await Task.Delay(TimeSpan.FromSeconds(waitSeconds), cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private int ResolveRetryAfterSeconds(HttpResponseMessage response)
+    {
+        var retry = response.Headers.RetryAfter;
+        if (retry?.Delta is TimeSpan delta)
+        {
+            return Math.Max(1, (int)Math.Ceiling(delta.TotalSeconds));
+        }
+
+        if (retry?.Date is DateTimeOffset date)
+        {
+            return Math.Max(1, (int)Math.Ceiling((date - DateTimeOffset.UtcNow).TotalSeconds));
+        }
+
+        return Math.Max(1, _backoffSeconds);
     }
 
     public void Dispose()
@@ -84,5 +126,7 @@ internal sealed class SpotifyApiClient : IDisposable
         {
             _httpClient.Dispose();
         }
+
+        _sendLock.Dispose();
     }
 }

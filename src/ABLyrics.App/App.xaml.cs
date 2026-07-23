@@ -55,6 +55,9 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 托盘常驻：禁止“最后一个窗口关闭即退出”，否则关设置窗会把进程一起干掉。
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
         if (DevExceptionReporter.IsEnabled)
         {
             DispatcherUnhandledException += OnDispatcherUnhandledException;

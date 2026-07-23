@@ -29,6 +29,7 @@ public sealed class AppBarController : IDisposable
         _hwnd = hwnd;
         var source = HwndSource.FromHwnd(hwnd);
         source?.AddHook(_wndProcHook);
+        AppBarNative.HideFromTaskSwitcher(hwnd);
     }
 
     public void Detach()
@@ -48,6 +49,8 @@ public sealed class AppBarController : IDisposable
         barData.CallbackMessage = AppBarNative.CallbackMessage;
         AppBarNative.SHAppBarMessage(AppBarNative.AbmNew, ref barData);
         QuerySetPos();
+        // ABM_NEW 后可能改写扩展样式，再刷一次以免重新出现在 Alt+Tab / Win+Tab。
+        AppBarNative.HideFromTaskSwitcher(_hwnd);
         _registered = true;
     }
 

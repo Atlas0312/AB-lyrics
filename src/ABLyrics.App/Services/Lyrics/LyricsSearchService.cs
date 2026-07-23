@@ -78,9 +78,17 @@ internal sealed class LyricsSearchService : ILyricsSearchService
         }
 
         var result = new List<LyricsCandidate>(hits.Count);
+        var filteredPlainOnly = 0;
         foreach (var hit in hits.OrderBy(h => Math.Abs(h.DurationMs - track.DurationMs)))
         {
             var (synced, plain) = LyricsTextNormalizer.NormalizeAll(hit.SyncedLyrics, hit.PlainLyrics);
+            // 本应用只展示同步歌词：plain-only / 空条目一律丢弃。
+            if (string.IsNullOrWhiteSpace(synced))
+            {
+                if (!string.IsNullOrWhiteSpace(plain)) filteredPlainOnly++;
+                continue;
+            }
+
             result.Add(new LyricsCandidate
             {
                 Source = "LRCLIB",

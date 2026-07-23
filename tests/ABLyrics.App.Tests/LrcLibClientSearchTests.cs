@@ -117,22 +117,54 @@ public class LrcLibClientSearchTests
     }
 
     [Fact]
-    public async Task SearchAsync_QueryStringContainsParameters()
+    public async Task SearchAsync_QueryStringUsesQParameter()
     {
         var handler = new StubHandler();
         handler.Enqueue(HttpStatusCode.OK, "[]");
         var client = NewClient(handler);
 
+        // CJK 艺人会并入 q；album 不再作为硬过滤参数。
         await client.SearchAsync("晴天", "周杰伦", "七里香", CancellationToken.None);
 
         Assert.NotNull(handler.LastRequestUri);
         var query = handler.LastQuery ?? string.Empty;
-        Assert.Contains("track_name=", query);
-        Assert.Contains("artist_name=", query);
-        Assert.Contains("album_name=", query);
-        Assert.Contains(Uri.EscapeDataString("晴天"), query);
-        Assert.Contains(Uri.EscapeDataString("周杰伦"), query);
-        Assert.Contains(Uri.EscapeDataString("七里香"), query);
+        Assert.Contains("q=", query);
+        Assert.DoesNotContain("track_name=", query);
+        Assert.DoesNotContain("album_name=", query);
+        Assert.Contains(Uri.EscapeDataString("晴天 周杰伦"), query);
+    }
+
+    [Fact]
+    public async Task SearchAsync_EnglishArtist_NotAppendedToQ()
+    {
+        var handler = new StubHandler();
+        handler.Enqueue(HttpStatusCode.OK, "[]");
+        var client = NewClient(handler);
+
+        await client.SearchAsync(
+            "相爱很难 - 电影\"男人四十\"歌曲",
+            "Jacky Cheung, Anita Mui",
+            "Album",
+            CancellationToken.None);
+
+        var query = handler.LastQuery ?? string.Empty;
+        Assert.Contains("q=", query);
+        Assert.Contains(Uri.EscapeDataString("相爱很难"), query);
+        Assert.DoesNotContain("Jacky", query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildSearchQuery_StripsSuffixAndKeepsCjkArtist()
+    {
+        Assert.Equal(
+            "相爱很难 张学友",
+            LrcLibClient.BuildSearchQuery("相爱很难 - 电影\"男人四十\"歌曲", "张学友"));
+        Assert.Equal(
+            "相爱很难",
+            LrcLibClient.BuildSearchQuery("相爱很难 - 电影\"男人四十\"歌曲", "Jacky Cheung, Anita Mui"));
+        Assert.Equal(
+            "相爱很难",
+            LrcLibClient.BuildSearchQuery("相爱很难(电影\"男人四十\"歌曲)", "Anita Mui"));
     }
 
     [Fact]

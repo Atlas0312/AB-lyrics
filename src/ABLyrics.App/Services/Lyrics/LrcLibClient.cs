@@ -80,8 +80,10 @@ internal sealed class LrcLibClient
     }
 
     /// <summary>
-    /// 多候选搜索：调 LRCLIB <c>/api/search</c>，把返回的 JSON 数组解析成
-    /// <see cref="LrcLibSearchHit"/> 列表。duration 是秒（float），统一换算为 ms。
+    /// 多候选搜索：调 LRCLIB <c>/api/search?q=...</c>（与官网搜索框一致的关键词检索）。
+    /// 不用 track_name+artist_name 硬过滤——Spotify 英文艺人名会把中文曲库里的
+    /// synced 条目全部滤掉，只留下同元数据的 plain-only。
+    /// duration 是秒（float），统一换算为 ms。
     /// 任何错误（网络/非 2xx/JSON 损坏）一律返回空列表，让上层调用者自行兜底。
     /// </summary>
     public async Task<IReadOnlyList<LrcLibSearchHit>> SearchAsync(
@@ -90,12 +92,16 @@ internal sealed class LrcLibClient
         string? albumName,
         CancellationToken cancellationToken = default)
     {
-        var query = $"search?track_name={Uri.EscapeDataString(trackName)}" +
-                    $"&artist_name={Uri.EscapeDataString(artistName)}";
-        if (!string.IsNullOrWhiteSpace(albumName))
+        // albumName 保留参数以兼容调用方，但不参与 q= 构造（字段级 album 过滤过严）。
+        _ = albumName;
+        var q = BuildSearchQuery(trackName, artistName);
+        if (string.IsNullOrWhiteSpace(q))
         {
-            query += $"&album_name={Uri.EscapeDataString(albumName)}";
+            return Array.Empty<LrcLibSearchHit>();
         }
+
+        var query = $"search?q={Uri.EscapeDataString(q)}";
+
 
         try
         {
@@ -138,6 +144,50 @@ internal sealed class LrcLibClient
             // 网络异常 / JSON 损坏 → 空列表，让上层做兜底
             return Array.Empty<LrcLibSearchHit>();
         }
+    }
+
+    /// <summary>
+    /// 构造与 lrclib.net 搜索框相近的关键词：取曲名主干，仅在艺人名含 CJK 时附加艺人。
+    /// </summary>
+    internal static string BuildSearchQuery(string trackName, string? artistName)
+    {
+        var core = (trackName ?? string.Empty).Trim();
+        if (core.Length == 0) return string.Empty;
+
+        var dash = core.IndexOf(" - ", StringComparison.Ordinal);
+        if (dash > 0)
+        {
+            core = core[..dash].Trim();
+        }
+
+        var paren = core.IndexOfAny(['(', '（']);
+        if (paren > 0)
+        {
+            core = core[..paren].Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(artistName) && ContainsCjk(artistName))
+        {
+            return $"{core} {artistName.Trim()}";
+        }
+
+        return core;
+    }
+
+    private static bool ContainsCjk(string value)
+    {
+        foreach (var ch in value)
+        {
+            if (ch is >= '\u3040' and <= '\u30FF' // Hiragana/Katakana
+                or >= '\u3400' and <= '\u4DBF' // CJK Ext A
+                or >= '\u4E00' and <= '\u9FFF' // CJK Unified
+                or >= '\uF900' and <= '\uFAFF') // CJK Compatibility
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
