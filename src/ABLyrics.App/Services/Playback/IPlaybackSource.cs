@@ -8,6 +8,8 @@ public interface IPlaybackSource
     string DisplayName { get; }
     bool IsAvailable { get; }
     bool IsConnected { get; }
+    /// <summary>非交互恢复已有会话；无凭据时返回 false，不弹登录。</summary>
+    Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default);
     Task ConnectAsync(CancellationToken cancellationToken = default);
     void Disconnect();
     Task<PlaybackState?> GetSnapshotAsync(CancellationToken cancellationToken = default);

@@ -27,6 +27,16 @@ public sealed class SpotifyPlaybackSource : IPlaybackSource
 
     public bool IsConnected => _authService.IsAuthenticated;
 
+    public Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsAvailable)
+        {
+            return Task.FromResult(false);
+        }
+
+        return _authService.TryRestoreSessionAsync(cancellationToken);
+    }
+
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         if (!IsAvailable)

@@ -21,6 +21,12 @@ public class PlaybackCoordinatorLocalMissingPromptTests
             IsConnected = true;
             return Task.CompletedTask;
         }
+        public Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
+        {
+            if (!IsAvailable) return Task.FromResult(false);
+            IsConnected = true;
+            return Task.FromResult(true);
+        }
         public void Disconnect() => IsConnected = false;
         public Task<PlaybackState?> GetSnapshotAsync(CancellationToken cancellationToken = default)
             => Task.FromResult<PlaybackState?>(null);

@@ -337,7 +337,14 @@ public sealed class PlaybackCoordinator : INotifyPropertyChanged, IDisposable
 
         try
         {
-            await _activePlaybackSource.ConnectAsync().ConfigureAwait(false);
+            var restored = await _activePlaybackSource.TryRestoreSessionAsync().ConfigureAwait(false);
+            if (!restored)
+            {
+                StatusText = $"请先连接 {_activePlaybackSource.DisplayName}";
+                SourceStateChanged?.Invoke();
+                return false;
+            }
+
             StatusText = $"已连接 {_activePlaybackSource.DisplayName}";
             SourceStateChanged?.Invoke();
             return true;
